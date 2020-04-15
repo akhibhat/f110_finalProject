@@ -246,7 +246,7 @@ class PurePursuit
             {
                 if (steering_angle > 0.2)
                 {
-                    drive_msg.drive.speed = 3.5;
+                    drive_msg.drive.speed = 4.0;
                     if (steering_angle > 0.4)
                     {
                         drive_msg.drive.steering_angle = 0.4;
@@ -254,14 +254,14 @@ class PurePursuit
                 }
                 else
                 {
-                    drive_msg.drive.speed = 4.0;
+                    drive_msg.drive.speed = 4.5;
                 }
             }
             else if (steering_angle < -0.1)
             {
                 if (steering_angle < -0.2)
                 {
-                    drive_msg.drive.speed = 3.5;
+                    drive_msg.drive.speed = 4.0;
                     if (steering_angle < -0.4)
                     {
                         drive_msg.drive.speed = -0.4;
@@ -269,12 +269,12 @@ class PurePursuit
                 }
                 else
                 {
-                    drive_msg.drive.speed = 4.0;
+                    drive_msg.drive.speed = 4.5;
                 }
             }
             else
             {
-                drive_msg.drive.speed = 4.5;
+                drive_msg.drive.speed = 5.0;
             }
             
             drive_pub_.publish(drive_msg);
