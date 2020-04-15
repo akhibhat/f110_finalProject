@@ -274,7 +274,7 @@ class PurePursuit
             }
             else
             {
-                drive_msg.drive.speed = 5.0;
+                drive_msg.drive.speed = 4.5;
             }
             
             drive_pub_.publish(drive_msg);
