@@ -19,5 +19,6 @@ The waypoints were collected by running follow-the-gap algorithm on the Skirkani
 ## How to run?
 - If you do not have the gym environment, follow the instructions at the [link](https://github.com/f1tenth/f1tenth_gym_ros)
 - Clone this repository and make sure everything builds
+- In `gym_pp/src/pure_pursuit.cpp`, change the parameter `filename_` to the path to the data file.
 - Run `sudo ./docker.sh` in the gym folder
 - Run `roslaunch gym_pp gym_pp.launch`
