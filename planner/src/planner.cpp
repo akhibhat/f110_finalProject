@@ -77,7 +77,7 @@ class Planner
             nh_ = nh;
             lookahead_d_ = 1.0;
 
-            trunctate_ = false;
+            truncate_ = false;
 
             delimiter_ = ",";
             filename_ = "/home/akhilesh/f110_ws/src/final_project/data/pp.csv";
@@ -277,7 +277,7 @@ class Planner
 
         void oppOdomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg)
         {
-
+            opp
         }
 
 
