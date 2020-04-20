@@ -1,4 +1,5 @@
 #include <ros/ros.h>
+#include <tf/transform_listener.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2_ros/transform_listener.h>
@@ -7,6 +8,8 @@
 #include <sensor_msgs/LaserScan.h>
 #include <ackermann_msgs/AckermannDriveStamped.h>
 #include <visualization_msgs/Marker.h>
+#include <nav_msgs/OccupancyGrid.h>
+#include <geometry_msgs/Pose2D.h>
 
 #include <fstream>
 #include <utility>
@@ -14,8 +17,9 @@
 #include <string>
 #include <boost/algorithm/string.hpp>
 
-#include "dynamics/vehicle_state.h"
+// #include "dynamics/vehicle_state.h"
 #include "planner/dubins_path.h"
+#include "planner/waypoint.h"
 
 class Planner
 {
@@ -31,23 +35,26 @@ class Planner
         ros::Publisher waypoint_viz_pub_;
 
         // Other variables
-        const double lookahead_d_;
-        const double bubble_radius_;
-        std::vector<double> steering_options_;
-        const double min_dist_;
-        const double gap_size_threshold_;
-        const double gap_threshold_;
+        double lookahead_d_;
+        double bubble_radius_;
+        std::vector<std::vector<double>> best_gaps_;
+        double min_dist_;
+        double gap_size_threshold_;
+        double gap_threshold_;
+        double inflation_r_;
+        double gap_bubble_;
 
         // Scan parameters
-        const auto start_idx_;
-        const auto end_idx_;
-        const double angle_increment_;
+        size_t start_idx_;
+        size_t end_idx_;
+        double angle_increment_;
         bool truncate_;
-        const double max_scan_;
+        double max_scan_;
 
         // data parsing
         std::string delimiter_;
-        std::string filename_;
+        std::string optimal_waypoint_file_;
+        int path_num_;
 
         // Map update parameters
         nav_msgs::OccupancyGrid input_map_;
@@ -63,11 +70,12 @@ class Planner
 
         // Tracks of waypoints (currently just 1)
         std::vector<Waypoint> global_path_;
+        std::vector<std::vector<Waypoint>> trajectory_options_;
         bool follow_global_;
 
         // State variables
-        State ego_car_;
-        State opp_car_;
+        geometry_msgs::Pose2D ego_car_;
+        geometry_msgs::Pose2D opp_car_;
 
 
     public:
@@ -76,11 +84,12 @@ class Planner
         {
             nh_ = nh;
             lookahead_d_ = 1.0;
+            path_num_ = 5;
 
-            trunctate_ = false;
+            truncate_ = false;
 
             delimiter_ = ",";
-            filename_ = "/home/akhilesh/f110_ws/src/final_project/data/pp.csv";
+            optimal_waypoint_file_ = "/home/akhilesh/f110_ws/src/final_project/data/pp.csv";
 
             ROS_INFO("Initialized constant!");
         }
@@ -93,11 +102,11 @@ class Planner
 
             drive_pub_ = nh_.advertise<ackermann_msgs::AckermannDriveStamped>("/drive", 1);
             waypoint_viz_pub_ = nh_.advertise<visualization_msgs::Marker>("waypoint_markers", 100);
-            map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>("/cost_map", 1)
+            map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>("/cost_map", 1);
 
-            ego_pose_sub_ = nh_.subscribe("/gt_pose", 1, &Planner::egoPoseCallback);
-            scan_sub_ = nh_.subscribe("/scan", 1, &Planner::scanCallback);
-            opp_odom_sub = nh_.subscribe("/opp_racecar/odom", 1, &Planner::oppOdomCallback);
+            ego_pose_sub_ = nh_.subscribe("/gt_pose", 1, &Planner::egoOdomCallback, this);
+            scan_sub_ = nh_.subscribe("/scan", 1, &Planner::scanCallback, this);
+            opp_odom_sub_ = nh_.subscribe("/opp_racecar/odom", 1, &Planner::oppOdomCallback, this);
 
             input_map_ = *(ros::topic::waitForMessage<nav_msgs::OccupancyGrid>("map", ros::Duration(2)));
 
@@ -119,72 +128,11 @@ class Planner
             }
 
             ROS_INFO("Reading waypoint data...");
-            global_path_ = get_data();
+            global_path_ = getOptimalTrack();
+            trajectory_options_ = getTrajectories();
 
             ROS_INFO("Stored the different tracks as a vector of vector of Waypoints");
         }
-
-        struct Waypoint
-        {
-            double x, y;
-            double heading, speed;
-
-            Waypoint() = default;
-
-            Waypoint(const geometry_msgs::PoseStamped::ConstPtr& pose_msg, double current_speed=0.1)
-            {
-                x = pose_msg->pose.position.x;
-                y = pose_msg->pose.position.y;
-
-                tf2::Quaternion q(pose_msg->pose.orientation.x,
-                                  pose_msg->pose.orientation.y,
-                                  pose_msg->pose.orientation.z,
-                                  pose_msg->pose.orientation.w);
-                tf2::Matrix3x3 mat(q);
-
-                double roll, pitch, yaw;
-                mat.getRPY(roll, pitch, yaw);
-
-                heading = yaw;
-                speed = current_speed;
-            }
-
-            Waypoint(const geometry_msgs::PoseStamped& pose_msg, double current_speed=0.1)
-            {
-                x = pose_msg.position.x;
-                y = pose_msg.position.y;
-
-                tf2::Quaternion q(pose_msg.orientation.x,
-                                  pose_msg.orientation.y,
-                                  pose_msg.orientation.z,
-                                  pose_msg.orientation.w);
-                tf2::Matrix3x3 mat(q);
-
-                double roll, pitch, yaw;
-                mat.getRPY(roll, pitch, yaw);
-
-                heading = yaw;
-                speed = current_speed;
-            }
-
-            Waypoint(const nav_msgs::Odometry::ConstPtr& odom_msg)
-            {
-                x = odom_msg->pose.pose.position.x;
-                y = odom_msg->pose.pose.position.y;
-
-                tf2::Quaternion q(odom_msg->pose.pose.orientation.x,
-                                  odom_msg->pose.pose.orientation.y,
-                                  odom_msg->pose.pose.orientation.z,
-                                  odom_msg->pose.pose.orientation.w);
-                tf2::Matrix3x3 mat(q);
-
-                double roll, pitch, yaw;
-                mat.getRPY(roll, pitch, yaw);
-
-                heading = yaw;
-                speed = current_speed;
-            }
-        };
 
         void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
         {
@@ -192,14 +140,14 @@ class Planner
 
             if (!truncate_)
             {
-                const truncate_size = static_cast<size_t>((180/(scan_msg->angle_max - scan_msg->angle_min))*scan_msg->ranges.size());
+                const size_t truncate_size = static_cast<size_t>((180/(scan_msg->angle_max - scan_msg->angle_min))*scan_msg->ranges.size());
 
                 start_idx_ = (scan_msg->ranges.size()/2) - (truncate_size/2);
                 end_idx_ = (scan_msg->ranges.size()/2) + (truncate_size/2);
 
                 truncate_ = true;
 
-                angle_increment_ = scan_msg->angle_increment
+                angle_increment_ = scan_msg->angle_increment;
             }
 
             ROS_DEBUG("Got truncated start and end indices!");
@@ -227,16 +175,11 @@ class Planner
 
             const auto closest_dist = filtered_ranges[closest_idx];
 
-            eliminate_bubble(&filtered_ranges, closest_idx, closest_dist);
+            eliminateBubble(&filtered_ranges, closest_idx, closest_dist);
 
             ROS_DEBUG("Eliminated safety bubble!");
 
-            auto best_idx = findbestGapIdx(filtered_ranges);
-
-            for (int i=0; i<best_idx.size(); i++)
-            {
-                steering_options_.push_back(angle_increment_*(best_idx[i]-(filtered_ranges.size()/2)))
-            }
+            findbestGapIdx(filtered_ranges);
         }
 
         void egoOdomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg)
@@ -254,8 +197,8 @@ class Planner
             mat.getRPY(roll, pitch, yaw);
 
             ego_car_.theta = yaw;
-            ego_car_.velocity = odom_msg->twist.twist.linear.x;
-            ego_car_.angular_velocity = odom_msg->twist.twist.angular.z;
+            // ego_car_.velocity = odom_msg->twist.twist.linear.x;
+            // ego_car_.angular_velocity = odom_msg->twist.twist.angular.z;
 
             try
             {
@@ -271,12 +214,36 @@ class Planner
             const auto dist = sqrt(pow(translation.x, 2) + pow(translation.y, 2));
 
             //TODO Find all waypoint options from all trajectory options
-            const auto waypoint_options = findWaypoints();
+            //TODO Add condition when opp_car is within a bubble radius
+            std::vector<Waypoint> waypoint_options;
+
+            if (translation.x > 0 && dist<gap_bubble_)
+            {
+                waypoint_options = findWaypoints();
+            }
+            else
+            {
+                waypoint_options = findOptimalWaypoint();
+            }
+
             const auto best_waypoint = checkFeasibility(waypoint_options);
         }
 
         void oppOdomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg)
         {
+            opp_car_.x = odom_msg->pose.pose.position.x;
+            opp_car_.y = odom_msg->pose.pose.position.y;
+            
+            tf2::Quaternion q(odom_msg->pose.pose.orientation.x,
+                              odom_msg->pose.pose.orientation.y,
+                              odom_msg->pose.pose.orientation.z,
+                              odom_msg->pose.pose.orientation.w);
+            tf2::Matrix3x3 mat(q);
+
+            double roll, pitch, yaw;
+            mat.getRPY(roll, pitch, yaw);
+
+            opp_car_.theta = yaw;
 
         }
 
@@ -310,7 +277,7 @@ class Planner
             const auto end = static_cast<int>(5*scan_msg->ranges.size()/6);
             double theta = scan_msg->angle_min + start*angle_increment;
 
-            for (int i=start, i<end, i++)
+            for (int i=start; i<end; i++)
             {
                 const double hit = scan_msg->ranges[i];
                 if (std::isnan(hit) || std::isinf(hit)) continue;
@@ -331,7 +298,7 @@ class Planner
                         new_obstacles_.push_back(obstacleIdx[i]);
                     }
                 }
-                theta += angle_increment
+                theta += angle_increment;
             }
 
             clear_obstacles_count_++;
@@ -357,12 +324,7 @@ class Planner
             const auto x_map_idx = static_cast<int>((x_map - input_map_.info.origin.position.x)/input_map_.info.resolution);
             const auto y_map_idx = static_cast<int>((y_map - input_map_.info.origin.position.y)/input_map_.info.resolution);
 
-            ROS_INFO("Reading waypoint data...");
-            global_path_ = get_data();
-
-            ROS_INFO("Stored the different tracks as a vector of vector of Waypoints");
-
-            for (int i=x_map_idx-inflation_r_; i<x_map_idx+inflation_r; i++)
+            for (int i=x_map_idx-inflation_r_; i<x_map_idx+inflation_r_; i++)
             {
                 for (int j=y_map_idx-inflation_r_; j<y_map_idx+inflation_r_; j++)
                 {
@@ -370,7 +332,7 @@ class Planner
                 }
             }
 
-            return obstacleIdx
+            return obstacleIdx;
         }
 
         size_t closestPoint(const std::vector<double>& scan_ranges)
@@ -382,10 +344,10 @@ class Planner
         void eliminateBubble(std::vector<double>* scan_ranges, const size_t closest_idx, const double closest_dist)
         {
             const auto angle = bubble_radius_/closest_dist;
-            const size_t start = round(closest_idx - (angle/angle_increment_));
-            const size_t end = round(closest_idx + (angle/angle_increment_));
+            auto start = round(closest_idx - (angle/angle_increment_));
+            auto end = round(closest_idx + (angle/angle_increment_));
 
-            if (end >= scan_ranges.size()) end = scan_ranges.size() - 1;
+            if (end >= scan_ranges->size()) end = scan_ranges->size() - 1;
 
             if (start < 0) start = 0;
 
@@ -395,15 +357,12 @@ class Planner
             }
         }
 
-
-        std::vector<int> findbestGapIdx(const std::vector<double>& scan_ranges)
+        std::vector<std::vector<double>> findbestGapIdx(const std::vector<double>& scan_ranges)
         {
             size_t current_start = 0;
             size_t current_size = 0;
 
             size_t current_idx = 0;
-
-            std::vector<int> best_idx;
 
             while (current_idx < scan_ranges.size())
             {
@@ -418,14 +377,64 @@ class Planner
 
                 if (current_size > gap_size_threshold_)
                 {
-                    size_t best = (current_start + current_start + current_size - 1)/2;
-                    best_idx.push_back(static_cast<int>(best));
+                    size_t start = current_start;
+                    size_t end = current_start + current_size - 1;
+                    std::vector<double> gap;
+                    gap.push_back(angle_increment_*(start-scan_ranges.size()/2));
+                    gap.push_back(angle_increment_*(end-scan_ranges.size()/2));
+
+                    best_gaps_.push_back(gap);
+                }
+            }
+        }
+
+        std::vector<Waypoint> findOptimalWaypoint()
+        {
+            try
+            {
+                tf_map_to_laser_ = tf_buffer_.lookupTransform("laser", "map", ros::Time(0));
+            }
+            catch (tf::TransformException& ex)
+            {
+                ROS_ERROR("%s", ex.what());
+                ros::Duration(0.1).sleep();
+            }
+
+            double waypoint_d = std::numeric_limits<double>::max();
+            int waypoint_idx = -1;
+
+            std::vector<Waypoint> optimal_waypoint;
+
+            for (int i=0; i<global_path_.size(); i++)
+            {
+                geometry_msgs::Pose goal_waypoint;
+                goal_waypoint.position.x = global_path_[i].x;
+                goal_waypoint.position.y = global_path_[i].y;
+                goal_waypoint.position.z = 0;
+                goal_waypoint.orientation.x = 0;
+                goal_waypoint.orientation.y = 0;
+                goal_waypoint.orientation.z = 0;
+                goal_waypoint.orientation.w = 1;
+
+                tf2::doTransform(goal_waypoint, goal_waypoint, tf_map_to_laser_);
+
+                if (goal_waypoint.position.x < 0) continue;
+
+                double d = sqrt(pow(goal_waypoint.position.x, 2) + pow(goal_waypoint.position.y, 2));
+                double diff = std::abs(lookahead_d_ - d);
+
+                if (diff < waypoint_d)
+                {
+                    const auto waypoint_map_idx = getMapIdx(global_path_[i].x, global_path_[i].y);
+                    if (input_map_.data[waypoint_map_idx] == 100) continue;
+                    waypoint_d = diff;
+                    waypoint_idx = i;
                 }
             }
 
-            //TODO Get gap positions in map frame for MPC constraints
+            optimal_waypoint.push_back(global_path_[waypoint_idx]);
 
-            return best_idx;
+            return optimal_waypoint;
         }
 
         std::vector<Waypoint> findWaypoints()
@@ -447,11 +456,11 @@ class Planner
                 double waypoint_d = std::numeric_limits<double>::max();
                 int waypoint_idx = -1;
 
-                for (int j=0; i<global_path_.size(); i++)
+                for (int j=0; i<trajectory_options_.size(); i++)
                 {
                     geometry_msgs::Pose goal_waypoint;
-                    goal_waypoint.position.x = global_path_[i][j].x;
-                    goal_waypoint.position.y = global_path_[i][j].x;
+                    goal_waypoint.position.x = trajectory_options_[i][j].x;
+                    goal_waypoint.position.y = trajectory_options_[i][j].x;
                     goal_waypoint.position.z = 0;
                     goal_waypoint.orientation.x = 0;
                     goal_waypoint.orientation.y = 0;
@@ -467,14 +476,14 @@ class Planner
 
                     if (diff < waypoint_d)
                     {
-                        const auto waypoint_map_idx = getMapIdx(global_path_[i][j].x, global_path_[i][j].y);
+                        const auto waypoint_map_idx = getMapIdx(trajectory_options_[i][j].x, trajectory_options_[i][j].y);
                         if (input_map_.data[waypoint_map_idx] == 100) continue;
                         waypoint_d = diff;
                         waypoint_idx = j;
                     }
                 }
 
-                waypoints.push_back(global_path_[i][waypoint_idx]);
+                waypoints.push_back(trajectory_options_[i][waypoint_idx]);
             }
 
             return waypoints;
@@ -492,6 +501,9 @@ class Planner
                 ros::Duration(0.1).sleep();
             }
 
+            double best_waypoint_cost = 0;
+            Waypoint best_waypoint;
+
             for(int i=0; i<waypoint_options.size(); i++)
             {
                 geometry_msgs::Pose goal_waypoint;
@@ -504,7 +516,79 @@ class Planner
                 goal_waypoint.orientation.w = 1;
 
                 tf2::doTransform(goal_waypoint, goal_waypoint, tf_map_to_laser_);
+
+                double steering_angle = atan2(goal_waypoint.position.x, goal_waypoint.position.y);
+                if (checkGap(steering_angle))
+                {
+                    // Send in either states or just waypoints
+                    double cost = dubinsCost(ego_car_, goal_waypoint);
+                    //TODO Check for obstacles as well
+
+                    if (cost > best_waypoint_cost)
+                    {
+                        best_waypoint_cost = cost;
+                        best_waypoint = waypoint_options[i];
+                    }
+                }
             }
+
+            best_gaps_.clear();
+            
+            return best_waypoint;
         }
 
-}
+        bool checkGap(double steering_angle)
+        {
+            for (int i=0; i<best_gaps_.size(); i++)
+            {
+                if (steering_angle<best_gaps_[i][0] || steering_angle>best_gaps_[i][1])
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        int getMapIdx(const double x_map, const double y_map)
+        {
+            const auto x_map_idx = static_cast<int>((x_map - input_map_.info.origin.position.x)/input_map_.info.resolution);
+            const auto y_map_idx = static_cast<int>((y_map - input_map_.info.origin.position.y)/input_map_.info.resolution);
+
+            return y_map_idx * input_map_.info.width + x_map_idx;
+        }
+
+        std::vector<Waypoint> getOptimalTrack()
+        {
+            std::ifstream file(optimal_waypoint_file_);
+            if (!file)
+            {
+                std::cout << "Invalid path" << "\n";
+            }
+
+            std::vector<Waypoint> trajectory;
+
+            std::string line = "";
+
+            while (getline(file, line))
+            {
+                std::vector<std::string> vec;
+                boost::algorithm::split(vec, line, boost::is_any_of(delimiter_));
+                Waypoint waypoint{};
+                waypoint.x = std::stod(vec[0]);
+                waypoint.y = std::stod(vec[1]);
+                waypoint.speed = 0.0;
+
+                trajectory.push_back(waypoint);
+            }
+
+            return trajectory;
+        }
+
+        std::vector<std::vector<Waypoint>> getTrajectories()
+        {
+            std::vector<std::vector<Waypoint>> trajectories;
+
+            return trajectories;
+        }
+
+};

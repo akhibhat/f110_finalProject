@@ -12,7 +12,6 @@ find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   nav_msgs
   roscpp
-  dynamics
   rospy
   sensor_msgs
   std_msgs
@@ -113,7 +112,7 @@ find_package(catkin REQUIRED COMPONENTS
 catkin_package(
   INCLUDE_DIRS include
   CATKIN_DEPENDS ackermann_msgs geometry_msgs nav_msgs roscpp rospy sensor_msgs
-  std_msgs visualization_msgs tf dynamics
+  std_msgs visualization_msgs tf
   #  DEPENDS system_lib
 )
 
