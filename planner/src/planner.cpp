@@ -73,6 +73,8 @@ class Planner
         std::vector<Waypoint> global_path_;
         std::vector<std::vector<Waypoint>> trajectory_options_;
         bool follow_global_;
+        int unique_id_;
+        int num_pts_collision_;
 
         // State variables
         geometry_msgs::Pose2D ego_car_;
@@ -84,7 +86,7 @@ class Planner
         Planner(ros::NodeHandle &nh) : tf2_listener_(tf_buffer_)
         {
             nh_ = nh;
-            lookahead_d_ = 2.0;
+            lookahead_d_ = 1.5;
             bubble_radius_ = 0.40;
             min_dist_ = 0.0;
             gap_size_threshold_ = 30;
@@ -96,10 +98,13 @@ class Planner
             max_scan_ = 5.0;
 
             delimiter_ = ",";
-            optimal_waypoint_file_ = "/home/akhilesh/f110_ws/src/final_project/planner/data/fg_pp.csv";
-            path_num_ = 5;
+            optimal_waypoint_file_ = "/home/akhilesh/f110_ws/src/final_project/planner/data/best.csv";
+            path_num_ = 4;
 
             clear_obstacles_count_ = 0;
+
+            unique_id_ = 0;
+            num_pts_collision_ = 20;
 
             ROS_INFO("Initialized constant!");
         }
@@ -140,7 +145,16 @@ class Planner
 
             ROS_INFO("Reading waypoint data...");
             global_path_ = getOptimalTrack();
-            // trajectory_options_ = getTrajectories();
+
+            std::string file1 = "/home/akhilesh/f110_ws/src/final_project/planner/data/inner2.csv";
+            std::string file2 = "/home/akhilesh/f110_ws/src/final_project/planner/data/inner4.csv";
+            std::string file3 = "/home/akhilesh/f110_ws/src/final_project/planner/data/outer2.csv";
+            std::string file4 = "/home/akhilesh/f110_ws/src/final_project/planner/data/outer4.csv";
+
+            trajectory_options_.push_back(getTrack(file1));
+            trajectory_options_.push_back(getTrack(file2));
+            trajectory_options_.push_back(getTrack(file3));
+            trajectory_options_.push_back(getTrack(file4));
 
             ROS_INFO("Stored the different tracks as a vector of vector of Waypoints");
         }
@@ -161,7 +175,7 @@ class Planner
                 angle_increment_ = scan_msg->angle_increment;
             }
 
-            ROS_INFO("Got truncated start and end indices!");
+            ROS_DEBUG("Got truncated start and end indices!");
 
             std::vector<double> filtered_ranges;
             for (size_t i=start_idx_; i<end_idx_; i++)
@@ -180,7 +194,7 @@ class Planner
                 }
             }
 
-            ROS_INFO("Filtered scan ranges of nans and infs");
+            ROS_DEBUG("Filtered scan ranges of nans and infs");
 
             const auto closest_pt_it = std::min_element(filtered_ranges.begin(), filtered_ranges.end());
             auto closest_idx = std::distance(filtered_ranges.begin(), closest_pt_it);
@@ -189,7 +203,7 @@ class Planner
 
             eliminateBubble(&filtered_ranges, closest_idx, closest_dist);
 
-            ROS_INFO("Eliminated safety bubble!");
+            ROS_DEBUG("Eliminated safety bubble!");
 
             findbestGapIdx(filtered_ranges);
         }
@@ -225,20 +239,11 @@ class Planner
             const auto translation = tf_opp_to_ego_.transform.translation;
             const auto dist = sqrt(pow(translation.x, 2) + pow(translation.y, 2));
 
-            Waypoint opp_car{};
-            opp_car.x = translation.x;
-            opp_car.y = translation.y;
-            opp_car.speed = 0.0;
-
-            //TODO Find all waypoint options from all trajectory options
-            //TODO Add condition when opp_car is within a bubble radius
             std::vector<Waypoint> waypoint_options;
 
-
-            if (translation.x > 0 && dist<gap_bubble_)
+            if (translation.x > 0 && dist < gap_bubble_)
             {
-                ROS_INFO("Within gap bubble!");
-                waypoint_options = findOptimalWaypoint();
+                waypoint_options = findWaypoints();
             }
             else
             {
@@ -247,7 +252,10 @@ class Planner
 
             const auto best_waypoint = checkFeasibility(waypoint_options);
 
-            add_waypoint_viz(best_waypoint, "ego_racecar/base_link",0.0,1.0,0.0,1.0,0.2,0.2,0.2);
+            add_waypoint_viz(best_waypoint, "ego_racecar/base_link", 0.0,1.0,0.0,1.0,0.2,0.2,0.2);
+
+            publishPPSpeed(best_waypoint);
+
         }
 
         void oppOdomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg)
@@ -335,7 +343,7 @@ class Planner
             }
 
             map_pub_.publish(input_map_);
-            ROS_INFO("Map updated");
+            ROS_DEBUG("Map updated");
         }
 
         std::vector<int> expandObstacles(const double x_map, const double y_map)
@@ -358,7 +366,6 @@ class Planner
 
         void eliminateBubble(std::vector<double>* scan_ranges, const size_t closest_idx, const double closest_dist)
         {
-            ROS_INFO("Eliminating bubble");
             const auto angle = bubble_radius_/closest_dist;
             auto start = round(closest_idx - (angle/angle_increment_));
             auto end = round(closest_idx + (angle/angle_increment_));
@@ -388,8 +395,6 @@ class Planner
 
             size_t current_idx = 0;
             
-            std::cout << scan_ranges.size() << "\n";
-
             while (current_idx < scan_ranges.size())
             {
                 current_start = current_idx;
@@ -503,13 +508,18 @@ class Planner
 
             std::vector<Waypoint> waypoints;
 
+            ROS_INFO("Looking through tracks!");
+
             for (int i=0; i<path_num_; i++)
             {
                 double waypoint_d = std::numeric_limits<double>::max();
                 int waypoint_idx = -1;
 
-                for (int j=0; i<trajectory_options_.size(); i++)
+                for (int j=0; j<trajectory_options_[i].size(); j++)
                 {
+
+                    if (checkCollision(trajectory_options_[i][j])) continue;
+
                     geometry_msgs::Pose goal_waypoint;
                     goal_waypoint.position.x = trajectory_options_[i][j].x;
                     goal_waypoint.position.y = trajectory_options_[i][j].x;
@@ -658,11 +668,33 @@ class Planner
             return trajectory;
         }
 
-        std::vector<std::vector<Waypoint>> getTrack(std::string filename)
+        std::vector<Waypoint> getTrack(std::string filename)
         {
-            std::vector<std::vector<Waypoint>> trajectories;
+            std::vector<Waypoint> trajectory;
 
-            return trajectories;
+            std::ifstream file(filename);
+            if(!file)
+            {
+                std::cout << "Invalid path" << "\n";
+            }
+
+            std::string line = "";
+
+            while (getline(file, line))
+            {
+                std::vector<std::string> vec;
+                boost::algorithm::split(vec, line, boost::is_any_of(delimiter_));
+                Waypoint waypoint{};
+                waypoint.x = std::stod(vec[0]);
+                waypoint.y = std::stod(vec[1]);
+                waypoint.speed = 0.0;
+
+                trajectory.push_back(waypoint);
+            }
+
+            file.close();
+
+            return trajectory;
         }
 
         void add_waypoint_viz(const Waypoint& waypoint, const std::string& frame_id,
@@ -673,6 +705,7 @@ class Planner
             waypoint_marker.header.frame_id = frame_id;
             waypoint_marker.header.stamp = ros::Time();
             waypoint_marker.ns = "planner";
+            waypoint_marker.id = unique_id_;
             waypoint_marker.type = visualization_msgs::Marker::CUBE;
             waypoint_marker.action = visualization_msgs::Marker::ADD;
             waypoint_marker.pose.position.x = waypoint.x;
@@ -691,6 +724,95 @@ class Planner
             waypoint_marker.color.b = b;
 
             waypoint_viz_pub_.publish(waypoint_marker);
+            unique_id_++;
+        }
+
+        bool checkCollision(Waypoint &waypoint)
+        {
+            bool collision = false;
+
+            double x_increment = (waypoint.x - ego_car_.x)/num_pts_collision_;
+            double y_increment = (waypoint.y - ego_car_.y)/num_pts_collision_;
+
+            double current_x = ego_car_.x;
+            double current_y = ego_car_.y;
+
+            for (int i=0; i<num_pts_collision_; i++)
+            {
+                current_x += x_increment;
+                current_y += y_increment;
+
+                if (isCollided(current_x, current_y))
+                {
+                    collision = true;
+                    return collision;
+                }
+            }
+
+            return collision;
+        }
+
+        bool isCollided(double x_map, double y_map)
+        {
+            const auto map_idx = getMapIdx(x_map, y_map);
+
+            return (input_map_.data[map_idx] == 100);
+        }
+
+        void publishPPSpeed(const Waypoint &waypoint)
+        {
+            geometry_msgs::Pose goal;
+            goal.position.x = waypoint.x;
+            goal.position.y = waypoint.y;
+            goal.position.z = 0;
+            goal.orientation.x = 0;
+            goal.orientation.y = 0;
+            goal.orientation.z = 0;
+            goal.orientation.w = 1;
+
+            try
+            {
+                tf_map_to_laser_ = tf_buffer_.lookupTransform("ego_racecar/base_link", "map", ros::Time(0));
+            }
+            catch(tf::TransformException& ex)
+            {
+                ROS_ERROR("%s", ex.what());
+                ros::Duration(0.1).sleep();
+            }
+
+            tf2::doTransform(goal, goal, tf_map_to_laser_);
+
+            const double steering_angle = (0.6*2*goal.position.y)/pow(lookahead_d_, 2);
+            double current_speed = 4.5;
+
+            ackermann_msgs::AckermannDriveStamped drive_msg;
+            drive_msg.header.stamp = ros::Time::now();
+            drive_msg.header.frame_id = "ego_racecar/base_link";
+            drive_msg.drive.steering_angle = steering_angle;
+
+            if (steering_angle > 0.41)
+            {
+                drive_msg.drive.steering_angle = 0.41;
+            }
+            else if (steering_angle < -0.41)
+            {
+                drive_msg.drive.steering_angle = -0.41;
+            }
+
+            if (abs(steering_angle) < 0.1745)
+            {
+                drive_msg.drive.speed = 4.5;
+            }
+            else if (abs(steering_angle) >= 0.1745 && abs(steering_angle) < 0.3491)
+            {
+                drive_msg.drive.speed = 4.0;
+            }
+            else
+            {
+                drive_msg.drive.speed = 3.5;
+            }
+
+            drive_pub_.publish(drive_msg);
         }
 
 };
