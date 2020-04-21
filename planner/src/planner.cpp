@@ -27,7 +27,7 @@ class Planner
         ros::NodeHandle nh_;
 
         // Publishers & Subscribers
-        ros::Subscriber ego_pose_sub_;
+        ros::Subscriber ego_odom_sub_;
         ros::Subscriber scan_sub_;
         ros::Subscriber opp_odom_sub_;
         ros::Publisher map_pub_;
@@ -38,6 +38,7 @@ class Planner
         double lookahead_d_;
         double bubble_radius_;
         std::vector<std::vector<double>> best_gaps_;
+        std::vector<std::vector<size_t>> best_gap_dist_;
         double min_dist_;
         double gap_size_threshold_;
         double gap_threshold_;
@@ -83,13 +84,22 @@ class Planner
         Planner(ros::NodeHandle &nh) : tf2_listener_(tf_buffer_)
         {
             nh_ = nh;
-            lookahead_d_ = 1.0;
-            path_num_ = 5;
+            lookahead_d_ = 2.0;
+            bubble_radius_ = 0.40;
+            min_dist_ = 0.0;
+            gap_size_threshold_ = 30;
+            gap_threshold_ = 2.0;
+            inflation_r_ = 5;
+            gap_bubble_ = 2.0;
 
             truncate_ = false;
+            max_scan_ = 5.0;
 
             delimiter_ = ",";
-            optimal_waypoint_file_ = "/home/akhilesh/f110_ws/src/final_project/data/pp.csv";
+            optimal_waypoint_file_ = "/home/akhilesh/f110_ws/src/final_project/planner/data/fg_pp.csv";
+            path_num_ = 5;
+
+            clear_obstacles_count_ = 0;
 
             ROS_INFO("Initialized constant!");
         }
@@ -99,15 +109,7 @@ class Planner
         void initialize()
         {
             ROS_INFO("Initializing publishers and subscribers...");
-
-            drive_pub_ = nh_.advertise<ackermann_msgs::AckermannDriveStamped>("/drive", 1);
-            waypoint_viz_pub_ = nh_.advertise<visualization_msgs::Marker>("waypoint_markers", 100);
-            map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>("/cost_map", 1);
-
-            ego_pose_sub_ = nh_.subscribe("/gt_pose", 1, &Planner::egoOdomCallback, this);
-            scan_sub_ = nh_.subscribe("/scan", 1, &Planner::scanCallback, this);
-            opp_odom_sub_ = nh_.subscribe("/opp_racecar/odom", 1, &Planner::oppOdomCallback, this);
-
+            
             input_map_ = *(ros::topic::waitForMessage<nav_msgs::OccupancyGrid>("map", ros::Duration(2)));
 
             if (input_map_.data.empty())
@@ -117,9 +119,18 @@ class Planner
 
             ROS_INFO("Received first map!");
 
+            drive_pub_ = nh_.advertise<ackermann_msgs::AckermannDriveStamped>("/drive", 1);
+            waypoint_viz_pub_ = nh_.advertise<visualization_msgs::Marker>("waypoint_markers", 1);
+            map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>("/cost_map", 1);
+
+            scan_sub_ = nh_.subscribe("/scan", 1, &Planner::scanCallback, this);
+            opp_odom_sub_ = nh_.subscribe("/opp_odom", 1, &Planner::oppOdomCallback, this);
+            ego_odom_sub_ = nh_.subscribe("/odom", 1, &Planner::egoOdomCallback, this);
+            ROS_INFO("Initialized publishers and subscribers!");
+
             try
             {
-                tf_laser_to_map_ = tf_buffer_.lookupTransform("map", "laser", ros::Time(0));
+                tf_laser_to_map_ = tf_buffer_.lookupTransform("map", "ego_racecar/laser", ros::Time(0));
             }
             catch(tf::TransformException& ex)
             {
@@ -129,7 +140,7 @@ class Planner
 
             ROS_INFO("Reading waypoint data...");
             global_path_ = getOptimalTrack();
-            trajectory_options_ = getTrajectories();
+            // trajectory_options_ = getTrajectories();
 
             ROS_INFO("Stored the different tracks as a vector of vector of Waypoints");
         }
@@ -140,7 +151,7 @@ class Planner
 
             if (!truncate_)
             {
-                const size_t truncate_size = static_cast<size_t>((180/(scan_msg->angle_max - scan_msg->angle_min))*scan_msg->ranges.size());
+                const size_t truncate_size = static_cast<size_t>((3.14/(scan_msg->angle_max - scan_msg->angle_min))*scan_msg->ranges.size());
 
                 start_idx_ = (scan_msg->ranges.size()/2) - (truncate_size/2);
                 end_idx_ = (scan_msg->ranges.size()/2) + (truncate_size/2);
@@ -150,7 +161,7 @@ class Planner
                 angle_increment_ = scan_msg->angle_increment;
             }
 
-            ROS_DEBUG("Got truncated start and end indices!");
+            ROS_INFO("Got truncated start and end indices!");
 
             std::vector<double> filtered_ranges;
             for (size_t i=start_idx_; i<end_idx_; i++)
@@ -169,15 +180,16 @@ class Planner
                 }
             }
 
-            ROS_DEBUG("Filtered scan ranges of nans and infs");
+            ROS_INFO("Filtered scan ranges of nans and infs");
 
-            const size_t closest_idx = closestPoint(filtered_ranges);
+            const auto closest_pt_it = std::min_element(filtered_ranges.begin(), filtered_ranges.end());
+            auto closest_idx = std::distance(filtered_ranges.begin(), closest_pt_it);
 
-            const auto closest_dist = filtered_ranges[closest_idx];
+            auto closest_dist = filtered_ranges[closest_idx];
 
             eliminateBubble(&filtered_ranges, closest_idx, closest_dist);
 
-            ROS_DEBUG("Eliminated safety bubble!");
+            ROS_INFO("Eliminated safety bubble!");
 
             findbestGapIdx(filtered_ranges);
         }
@@ -213,13 +225,20 @@ class Planner
             const auto translation = tf_opp_to_ego_.transform.translation;
             const auto dist = sqrt(pow(translation.x, 2) + pow(translation.y, 2));
 
+            Waypoint opp_car{};
+            opp_car.x = translation.x;
+            opp_car.y = translation.y;
+            opp_car.speed = 0.0;
+
             //TODO Find all waypoint options from all trajectory options
             //TODO Add condition when opp_car is within a bubble radius
             std::vector<Waypoint> waypoint_options;
 
+
             if (translation.x > 0 && dist<gap_bubble_)
             {
-                waypoint_options = findWaypoints();
+                ROS_INFO("Within gap bubble!");
+                waypoint_options = findOptimalWaypoint();
             }
             else
             {
@@ -227,6 +246,8 @@ class Planner
             }
 
             const auto best_waypoint = checkFeasibility(waypoint_options);
+
+            add_waypoint_viz(best_waypoint, "ego_racecar/base_link",0.0,1.0,0.0,1.0,0.2,0.2,0.2);
         }
 
         void oppOdomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg)
@@ -252,7 +273,7 @@ class Planner
         {
             try
             {
-                tf_laser_to_map_ = tf_buffer_.lookupTransform("map", "laser", ros::Time(0));
+                tf_laser_to_map_ = tf_buffer_.lookupTransform("map", "ego_racecar/laser", ros::Time(0));
             }
             catch(tf::TransformException& e)
             {
@@ -335,21 +356,22 @@ class Planner
             return obstacleIdx;
         }
 
-        size_t closestPoint(const std::vector<double>& scan_ranges)
-        {
-            const auto min_iter = std::min_element(scan_ranges.begin(), scan_ranges.end());
-            return std::distance(scan_ranges.begin(), min_iter);
-        }
-
         void eliminateBubble(std::vector<double>* scan_ranges, const size_t closest_idx, const double closest_dist)
         {
+            ROS_INFO("Eliminating bubble");
             const auto angle = bubble_radius_/closest_dist;
             auto start = round(closest_idx - (angle/angle_increment_));
             auto end = round(closest_idx + (angle/angle_increment_));
 
-            if (end >= scan_ranges->size()) end = scan_ranges->size() - 1;
+            if (end >= scan_ranges->size())
+            {
+                end = scan_ranges->size() - 1;
+            }
 
-            if (start < 0) start = 0;
+            if (start < 0)
+            {
+                start = 0;
+            }
 
             for (size_t i=start; i<end; i++)
             {
@@ -357,34 +379,64 @@ class Planner
             }
         }
 
-        std::vector<std::vector<double>> findbestGapIdx(const std::vector<double>& scan_ranges)
+        void findbestGapIdx(const std::vector<double>& scan_ranges)
         {
-            size_t current_start = 0;
-            size_t current_size = 0;
+            size_t max_start_idx = 0;
+            size_t max_size_ = 0;
+            size_t current_start;
+            size_t current_size;
 
             size_t current_idx = 0;
+            
+            std::cout << scan_ranges.size() << "\n";
 
             while (current_idx < scan_ranges.size())
             {
                 current_start = current_idx;
                 current_size = 0;
 
-                while (current_idx < scan_ranges.size() && scan_ranges[current_idx] > gap_threshold_)
+                while ((current_idx < scan_ranges.size()) && (scan_ranges[current_idx] > gap_threshold_))
                 {
                     current_size++;
                     current_idx++;
                 }
 
-                if (current_size > gap_size_threshold_)
+                if (current_size > max_size_)
                 {
-                    size_t start = current_start;
-                    size_t end = current_start + current_size - 1;
-                    std::vector<double> gap;
-                    gap.push_back(angle_increment_*(start-scan_ranges.size()/2));
-                    gap.push_back(angle_increment_*(end-scan_ranges.size()/2));
+ //                   ROS_INFO("Found the gap!");
+ //                   size_t start = current_start;
+ //                   size_t end = current_start + current_size - 1;
+ //                   std::vector<double> gap;
+ //                   std::vector<size_t> gap_dist;
+ //                   gap.push_back(angle_increment_*(start-scan_ranges.size()/2));
+ //                   gap.push_back(angle_increment_*(end-scan_ranges.size()/2));
+ //                   gap_dist.push_back(scan_ranges[start]);
+ //                   gap_dist.push_back(scan_ranges[end]);
 
-                    best_gaps_.push_back(gap);
+ //                   best_gaps_.push_back(gap);
+ //                   best_gap_dist_.push_back(gap_dist);
+                    max_start_idx = current_start;
+                    max_size_ = current_size;
+                    current_size = 0;
                 }
+                current_idx++;
+            }
+
+            if (current_size > max_size_)
+            {
+                max_start_idx = current_start;
+                max_size_ = current_size;
+
+                std::vector<double> gap;
+                std::vector<size_t> gap_dist;
+                gap.push_back(angle_increment_*(max_start_idx-scan_ranges.size()/2));
+                gap.push_back(angle_increment_*(max_start_idx+max_size_-1-scan_ranges.size()/2));
+
+                gap_dist.push_back(scan_ranges[max_start_idx]);
+                gap_dist.push_back(scan_ranges[max_start_idx+max_scan_-1]);
+
+                best_gaps_.push_back(gap);
+                best_gap_dist_.push_back(gap_dist);
             }
         }
 
@@ -392,7 +444,7 @@ class Planner
         {
             try
             {
-                tf_map_to_laser_ = tf_buffer_.lookupTransform("laser", "map", ros::Time(0));
+                tf_map_to_laser_ = tf_buffer_.lookupTransform("ego_racecar/laser", "map", ros::Time(0));
             }
             catch (tf::TransformException& ex)
             {
@@ -441,7 +493,7 @@ class Planner
         {
             try
             {
-                tf_map_to_laser_ = tf_buffer_.lookupTransform("laser", "map", ros::Time(0));
+                tf_map_to_laser_ = tf_buffer_.lookupTransform("ego_racecar/laser", "map", ros::Time(0));
             }
             catch (tf::TransformException& ex)
             {
@@ -493,7 +545,7 @@ class Planner
         {
             try
             {
-                tf_map_to_laser_ = tf_buffer_.lookupTransform("laser", "map", ros::Time(0));
+                tf_map_to_laser_ = tf_buffer_.lookupTransform("ego_racecar/laser", "map", ros::Time(0));
             }
             catch(tf::TransformException& ex)
             {
@@ -521,7 +573,8 @@ class Planner
                 if (checkGap(steering_angle))
                 {
                     // Send in either states or just waypoints
-                    double cost = dubinsCost(ego_car_, goal_waypoint);
+                    // double cost = dubinsCost(ego_car_, goal_waypoint);
+                    double cost = gapCost(goal_waypoint);
                     //TODO Check for obstacles as well
 
                     if (cost > best_waypoint_cost)
@@ -535,6 +588,27 @@ class Planner
             best_gaps_.clear();
             
             return best_waypoint;
+        }
+
+        double gapCost(geometry_msgs::Pose waypoint)
+        {
+            double best_cost = std::numeric_limits<double>::max();
+
+            for (int i=0; i<best_gap_dist_.size(); i++)
+            {
+                // double start_x = best_gap_dist_[i][0]*cos(best_gaps_[i][0]);
+                //double start_y = best_gap_dist_[i][0]*sin(best_gaps_[i][0]);
+
+                //double end_x = best_gap_dist_[i][1]*cos(best_gaps_[i][1]);
+                //double end_y = best_gap_dist_[i][1]*sin(best_gaps_[i][1]);
+
+                if (best_gaps_[i][0] + best_gaps_[i][1] < best_cost)
+                {
+                    best_cost = best_gaps_[i][0] + best_gaps_[i][1];
+                }
+            }
+
+            return best_cost;
         }
 
         bool checkGap(double steering_angle)
@@ -584,11 +658,51 @@ class Planner
             return trajectory;
         }
 
-        std::vector<std::vector<Waypoint>> getTrajectories()
+        std::vector<std::vector<Waypoint>> getTrack(std::string filename)
         {
             std::vector<std::vector<Waypoint>> trajectories;
 
             return trajectories;
         }
 
+        void add_waypoint_viz(const Waypoint& waypoint, const std::string& frame_id,
+                double r, double g, double b, double transparency=0.5,
+                double scale_x=0.1, double scale_y=0.1, double scale_z=0.1)
+        {
+            visualization_msgs::Marker waypoint_marker;
+            waypoint_marker.header.frame_id = frame_id;
+            waypoint_marker.header.stamp = ros::Time();
+            waypoint_marker.ns = "planner";
+            waypoint_marker.type = visualization_msgs::Marker::CUBE;
+            waypoint_marker.action = visualization_msgs::Marker::ADD;
+            waypoint_marker.pose.position.x = waypoint.x;
+            waypoint_marker.pose.position.y = waypoint.y;
+            waypoint_marker.pose.position.z = 0;
+            waypoint_marker.pose.orientation.x = 0.0;
+            waypoint_marker.pose.orientation.y = 0.0;
+            waypoint_marker.pose.orientation.z = 0.0;
+            waypoint_marker.pose.orientation.w = 1.0;
+            waypoint_marker.scale.x = scale_x;
+            waypoint_marker.scale.y = scale_y;
+            waypoint_marker.scale.z = scale_z;
+            waypoint_marker.color.a = transparency;
+            waypoint_marker.color.r = r;
+            waypoint_marker.color.g = g;
+            waypoint_marker.color.b = b;
+
+            waypoint_viz_pub_.publish(waypoint_marker);
+        }
+
 };
+
+int main(int argc, char** argv)
+{
+    ros::init(argc, argv, "planner");
+    ros::NodeHandle nh;
+
+    Planner planner(nh);
+    planner.initialize();
+    ros::spin();
+
+    return 0;
+}
