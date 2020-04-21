@@ -7,11 +7,13 @@
 #include <sensor_msgs/LaserScan.h>
 #include <ackermann_msgs/AckermannDriveStamped.h>
 #include <visualization_msgs/Marker.h>
+#include <visualization_msgs/MarkerArray.h>
 
 #include <fstream>
 #include <utility>
 #include <vector>
 #include <string>
+#include <chrono>
 #include <boost/algorithm/string.hpp>
 
 #include "dynamics/vehicle_state.h"
@@ -29,6 +31,7 @@ class Planner
         ros::Publisher map_pub_;
         ros::Publisher drive_pub_;
         ros::Publisher waypoint_viz_pub_;
+        ros::Publisher pub_pred_markers_;
 
         // Other variables
         const double lookahead_d_;
@@ -60,6 +63,7 @@ class Planner
         geometry_msgs::TransformStamped tf_map_to_laser_;
         geometry_msgs::TransformStamped tf_laser_to_map_;
         geometry_msgs::TransformStamped tf_opp_to_ego_;
+        // geometry_msgs::TransformStamped tf_map_to_opp_base_;
 
         // Tracks of waypoints (currently just 1)
         std::vector<Waypoint> global_path_;
@@ -94,6 +98,7 @@ class Planner
             drive_pub_ = nh_.advertise<ackermann_msgs::AckermannDriveStamped>("/drive", 1);
             waypoint_viz_pub_ = nh_.advertise<visualization_msgs::Marker>("waypoint_markers", 100);
             map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>("/cost_map", 1)
+            pub_pred_markers_ = nh_.advertise<visualization_msgs::MarkerArray>("/predicted_path",100);
 
             ego_pose_sub_ = nh_.subscribe("/gt_pose", 1, &Planner::egoPoseCallback);
             scan_sub_ = nh_.subscribe("/scan", 1, &Planner::scanCallback);
@@ -275,11 +280,199 @@ class Planner
             const auto best_waypoint = checkFeasibility(waypoint_options);
         }
 
+        //This method predicts the path of the opponent car and updates the path as obstacles in the map
         void oppOdomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg)
-        {
-            opp
+        {   
+            //record the current opponent pose as waypoint
+            const auto current_pose = Waypoint(odom_msg);
+
+            //note the time when the pose is recorded
+            // std::chrono::steady_clock::time_point previous_time = std::chrono::steady_clock::now()
+
+            opp_car_.theta = yaw;
+            opp_car_.velocity = odom_msg->twist.twist.linear.x;
+            opp_car_.angular_velocity = odom_msg->twist.twist.angular.z;
+
+            //linear model weight factor
+            double alpha = 0.8; //tunabel parameter
+
+            //container to store the predicted poses of opponent car
+            std::vector<double> x_opp_car_poses;
+            std::vector<double> y_opp_car_poses;
+
+            //store the current obtained pose as the first pose
+            x_opp_car_poses.push_back(opp_car_.x);
+            y_opp_car_poses.push_back(opp_car_.y);
+
+            double last_x_opp_car = current_pose.x;
+            double last_y_opp_car = current_pose.y;
+
+            double next_x_opp = opp_car_.x;
+            double next_y_opp = opp_car_.y;
+            double initial_heading = current_pose.heading; //the current yaw of the odom.
+
+            double opp_vel = current_pose.speed; //make sure the waypoint struct is not storing the default 0.1 always
+            // double opp_vel = 2.5;
+            // ROS_INFO("%f",opp_vel);
+
+            const double pp_steering_angle = PPAngle(current_pose);
+
+            for(int i=0; i<=10; i++)
+            {
+
+                double final_steering_angle = (1 - pow(alpha, i))*(pp_steering_angle)*3; //*3 is tunable parameter
+                double net_heading = initial_heading + final_steering_angle;
+                // ROS_INFO("pp_steering_angle: %f iteration i = %d", steering_angle, i);
+
+                next_x_opp = next_x_opp + opp_vel*(cos(net_heading))*0.1; //(no of iterations * 0.1 = 1 second)
+                next_y_opp = next_y_opp + opp_vel*(sin(net_heading))*0.1;
+
+                auto current_pose = Waypoint();
+                current_pose.x = next_x_opp;
+                current_pose.y = next_y_opp;
+                current_pose.heading = net_heading;
+
+
+                x_opp_car_poses.push_back(next_x_opp);
+                y_opp_car_poses.push_back(next_y_opp);
+            }
+
+            PublishPredictionMarkers(x_opp_car_poses, y_opp_car_poses);
+
+            for (int i=0; i<x_opp_car_poses.size(), i++)
+            {
+                std::vector<int> obstacleIdx = expandObstacles(x_opp_car_poses[i], y_opp_car_poses[i]);
+
+                for (int i=0; i<obstacleIdx.size(); i++)
+                {
+                    if (input_map_.data[obstacleIdx[i]] != 100)
+                    {
+                        input_map_.data[obstacleIdx[i]] = 100;
+                        new_obstacles_.push_back(obstacleIdx[i]);
+                    }
+                }
+            }
+
         }
 
+        void PublishPredictionMarkers(const std::vector<double>& x_poses_ego_vehicle, const std::vector<double>& y_poses_ego_vehicle)
+        {
+            visualization_msgs::MarkerArray viz_msg;
+
+            ROS_INFO("Publishing Prediction Markers");
+            viz_msg.markers.clear();
+
+            for(size_t i=0; i<x_poses_ego_vehicle.size(); i++)
+            {
+                visualization_msgs::Marker point;
+                point.header.frame_id = "map";
+                point.header.stamp = ros::Time::now();
+                point.ns = "point_123";
+                point.action =visualization_msgs::Marker::ADD;
+                point.pose.orientation.w = 1.0;
+                point.id = i;
+                point.type = visualization_msgs::Marker::SPHERE;
+                point.scale.x = 0.2;
+                point.scale.y = 0.2;
+                point.scale.z = 0.2;
+                point.color.r = 1.0f;
+                point.color.g = 0.0f;
+                point.color.a = 1.0;
+                point.pose.position.x = x_poses_ego_vehicle[i];
+                point.pose.position.y = y_poses_ego_vehicle[i];
+                point.lifetime = ros::Duration(10);
+                viz_msg.markers.push_back(std::move(point));
+            }
+            pub_pred_markers_.publish(viz_msg);
+            ROS_INFO("Published Prediction Markers");
+        }
+
+        //This method gives the steering angle based on pure-pursuit for opponent car
+        double PPAngle(const Waypoint& current_pose)
+        {   
+            // Transform waypoints to baselink frame
+            const auto transformed_waypoints = transform(global_path_, current_pose);
+
+            // Find best waypoint to track
+            const auto best_waypoint = find_best_waypoint(transformed_waypoints, lookahead_d_);
+
+            // Transform the waypoint to base_link frame
+            geometry_msgs::TransformStamped map_to_opp_base_link;
+            map_to_opp_base_link = tf_buffer_.lookupTransform("opp_racecar/base_link", "map", ros::Time(0));
+
+            geometry_msgs::Pose goal_waypoint;
+            goal_waypoint.position.x = global_path_[best_waypoint].x;
+            goal_waypoint.position.y = global_path_[best_waypoint].y;
+            goal_waypoint.position.z = 0;
+            goal_waypoint.orientation.x = 0;
+            goal_waypoint.orientation.y = 0;
+            goal_waypoint.orientation.z = 0;
+            goal_waypoint.orientation.w = 1;
+
+            tf2::doTransform(goal_waypoint, goal_waypoint, map_to_base_link);
+
+            // add_waypoint_viz(goal_waypoint, "base_link", 0.0, 1.0, 0.0, 1.0, 0.2, 0.2, 0.2);
+
+            double pp_steering_angle = 0.6*2*goal_waypoint.position.y/(lookahead_d_ * lookahead_d_);
+
+            return pp_steering_angle
+        }
+
+        size_t find_best_waypoint(const std::vector<Waypoint>& waypoint_data_, double lookahead_d_)
+        {   
+            size_t last_waypt_idx;
+            double closest_dist = std::numeric_limits<double>::max();
+            const size_t waypoint_size = waypoint_data_.size();
+
+            for (size_t i=0; i < waypoint_size; i++)
+            {
+                if (waypoint_data_[i].x < 0) continue;
+                double d = sqrt(waypoint_data_[i].x*waypoint_data_[i].x + waypoint_data_[i].y*waypoint_data_[i].y);
+                double diff = std::abs(d - lookahead_d_);
+
+                if (diff < closest_dist)
+                {
+                    closest_dist = diff;
+                    last_waypt_idx = i;
+                }
+            }
+
+            return last_waypt_idx;
+        }
+
+        std::vector<Waypoint> transform(const std::vector<Waypoint>& waypoints, const Waypoint& current_pose)
+        {
+            geometry_msgs::TransformStamped tf_map_to_opp_base_link_;
+            try
+            {
+                tf_map_to_opp_base_link_ = tf_buffer_.lookupTransform("opp_racecar/base_link", "map", ros::Time(0));
+            }
+            catch(tf::TransformException& ex)
+            {
+                ROS_ERROR("%s", ex.what());
+                ros::Duration(0.1).sleep();
+            }
+
+            std::vector<Waypoint> transformed_waypoints;
+
+            for (int i=0; i<waypoints.size(); i++)
+            {
+                geometry_msgs::Pose trans_waypoint;
+                trans_waypoint.position.x = waypoints[i].x;
+                trans_waypoint.position.y = waypoints[i].y;
+                trans_waypoint.position.z = 0;
+                trans_waypoint.orientation.x = 0;
+                trans_waypoint.orientation.y = 0;
+                trans_waypoint.orientation.z = 0;
+                trans_waypoint.orientation.w = 1;
+
+                tf2::doTransform(trans_waypoint, trans_waypoint, map_to_base_link);
+
+                transformed_waypoints.push_back(Waypoint(trans_waypoint));
+            }
+
+            return transformed_waypoints;
+        }
 
         void updateStaticMap(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
         {
