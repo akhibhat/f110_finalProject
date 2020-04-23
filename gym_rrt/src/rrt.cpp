@@ -10,7 +10,7 @@ RRT::~RRT()
 
 RRT::RRT(ros::NodeHandle &nh): nh_(nh), gen((std::random_device())()), tf2_listener_(tf_buffer_)
 {
-    folder_path_ = "/home/akhilesh/f110_ws/src/final_project/";
+    folder_path_ = "/home/akhilesh/f110_ws/src/f110_finalProject/";
 
     filename_ = folder_path_ + "waypoints_data/wp_centre.csv";
     delimiter_ = ",";
