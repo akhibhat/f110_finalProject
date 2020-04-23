@@ -114,6 +114,7 @@ class RRT
         nav_msgs::OccupancyGrid input_map_;
 
         // data parsing
+        std::string folder_path_;
         std::string filename_;
         std::string delimiter_;
 

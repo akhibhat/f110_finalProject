@@ -21,9 +21,7 @@ class Listener:
         pose_msg.header = odom_msg.header
         pose_msg.pose = odom_msg.pose.pose
 
-        self.pose_pub = rospy.Publisher("/gt_pose", PoseStamped, queue_size=1)
-
-        self.pose_pub.publish(pose_msg)
+        self.pose_pub_.publish(pose_msg)
 
 if __name__ == "__main__":
     listen = Listener()
