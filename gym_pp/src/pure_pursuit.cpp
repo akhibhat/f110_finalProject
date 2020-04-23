@@ -24,7 +24,7 @@ class PurePursuit
             lookahead_d_ = 1.8;
             waypt_num_ = 0.0;
             delimiter_ = ",";
-            filename_ = "/home/akhilesh/f110_ws/src/final_project/gym_pp/data/fg_pp.csv";
+            filename_ = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/gym_pp/data/fg_pp.csv";
             ROS_INFO("Initialized constants!");
         }
 

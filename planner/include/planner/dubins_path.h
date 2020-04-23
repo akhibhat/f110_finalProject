@@ -3,7 +3,6 @@
 #include <cmath>
 #include <string>
 
-//#include "dynamics/vehicle_state.h"
 
 class DubinsPath
 {

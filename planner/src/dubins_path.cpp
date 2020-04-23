@@ -277,5 +277,4 @@ class DubinsPath
             return {path_, path_cost};
             
         }
-
 }
