@@ -10,7 +10,7 @@ RRT::~RRT()
 
 RRT::RRT(ros::NodeHandle &nh): nh_(nh), gen((std::random_device())()), tf2_listener_(tf_buffer_)
 {
-    filename_ = "/home/akhilesh/f110_ws/src/final_project/gym_rrt/data/best.csv";
+    filename_ = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_centre.csv";
     delimiter_ = ",";
 
     // Load first Map from map_server
@@ -25,7 +25,7 @@ RRT::RRT(ros::NodeHandle &nh): nh_(nh), gen((std::random_device())()), tf2_liste
 
     try
     {
-        tf_laser_to_map_ = tf_buffer_.lookupTransform("map", "ego_racecar/laser", ros::Time(0));
+        tf_laser_to_map_ = tf_buffer_.lookupTransform("map", "laser", ros::Time(0));
     }
     catch(tf::TransformException& ex)
     {
@@ -36,10 +36,10 @@ RRT::RRT(ros::NodeHandle &nh): nh_(nh), gen((std::random_device())()), tf2_liste
     global_path_ = getOptimalWaypoints();
     path_num_ = 4;
 
-    std::string file1 = "/home/akhilesh/f110_ws/src/final_project/gym_rrt/data/inner2.csv";
-    std::string file2 = "/home/akhilesh/f110_ws/src/final_project/gym_rrt/data/inner3.csv";
-    std::string file3 = "/home/akhilesh/f110_ws/src/final_project/gym_rrt/data/outer2.csv";
-    std::string file4 = "/home/akhilesh/f110_ws/src/final_project/gym_rrt/data/outer4.csv";
+    std::string file1 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_inner2.csv";
+    std::string file2 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_outer2.csv";
+    std::string file3 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_inner3.csv";  
+    std::string file4 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_outer3.csv";
 
     trajectory_options_.push_back(getTrackpoints(file1));
     trajectory_options_.push_back(getTrackpoints(file2));
@@ -52,7 +52,7 @@ RRT::RRT(ros::NodeHandle &nh): nh_(nh), gen((std::random_device())()), tf2_liste
 
     // ROS publishers
     map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>("/dynamic_map", 1);
-    drive_pub_ = nh_.advertise<ackermann_msgs::AckermannDriveStamped>("/drive", 1);
+    drive_pub_ = nh_.advertise<ackermann_msgs::AckermannDriveStamped>("/nav", 1);
     waypoint_viz_pub_ = nh_.advertise<visualization_msgs::Marker>("waypoint_viz", 1);
     tree_viz_pub_ = nh_.advertise<visualization_msgs::Marker>("tree_viz", 1);
 
@@ -60,12 +60,13 @@ RRT::RRT(ros::NodeHandle &nh): nh_(nh), gen((std::random_device())()), tf2_liste
     clear_obstacles_count_ = 0;
     enable_rrt_star_ = true;
 
-    // RRT parameters
+    // RRT parmeters
+    SPEED = 1.0;
     num_pts_collision_ = 20;
-    lookahead_d_ = 2.0;
+    lookahead_d_ = 1.8;
     inflation_r_ = 3;
-    local_lookahead_d_ = 1.4;
-    goal_threshold_ = 0.2;
+    local_lookahead_d_ = 1.0;
+    goal_threshold_ = 0.4;
     max_expansion_dist_ = 1.0;
     max_iters_ = 2000;
     search_radius_ = 1.0;
@@ -224,7 +225,7 @@ void RRT::scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
     // Update occupancy grid
     try
     {
-        tf_laser_to_map_ = tf_buffer_.lookupTransform("map", "ego_racecar/laser", ros::Time(0));
+        tf_laser_to_map_ = tf_buffer_.lookupTransform("map", "laser", ros::Time(0));
     }
     catch(tf::TransformException& e)
     {
@@ -287,7 +288,7 @@ void RRT::scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
     }
 
     map_pub_.publish(input_map_);
-    ROS_INFO("Map updated");
+    // ROS_INFO("Map updated");
 }
 
 void RRT::poseCallback(const geometry_msgs::PoseStamped::ConstPtr& pose_msg)
@@ -300,14 +301,12 @@ void RRT::poseCallback(const geometry_msgs::PoseStamped::ConstPtr& pose_msg)
     //      None
     current_x_ = pose_msg->pose.position.x;
     current_y_ = pose_msg->pose.position.y;
+
+    bool bool_path_found = false;
+
     const auto current_pose = Waypoint(pose_msg);
 
     const auto waypoint = findOptGlobalWaypoint(current_pose);
-
-    auto waypoint_options = findWaypointOptions(current_pose);
-    waypoint_options.push_back(waypoint);
-
-    const auto waypoint = chooseWaypoint(waypoint_options);
 
     std::vector<Node> tree;
 
@@ -381,10 +380,11 @@ void RRT::poseCallback(const geometry_msgs::PoseStamped::ConstPtr& pose_msg)
 
         tree.push_back(new_node);
 
-        if (isGoal(new_node, waypoint.x, waypoint.y))
-        {
+        if (isGoal(new_node, waypoint.x, waypoint.y))\
+        {   
+            // ROS_INFO("Inside first if");
             local_path_ = findPath(tree, new_node);
-            ROS_INFO("Path found");
+            // ROS_INFO("Path found");
 
             const auto local_waypoint_d = findLocalWaypoint(current_pose);
             const auto local_waypoint = local_waypoint_d.first;
@@ -402,11 +402,11 @@ void RRT::poseCallback(const geometry_msgs::PoseStamped::ConstPtr& pose_msg)
             geometry_msgs::Pose transform_waypoint;
             tf2::doTransform(goal_waypoint, transform_waypoint, tf_map_to_laser_);
 
-            const double steering_angle = 0.6*2*(transform_waypoint.position.y)/pow(d, 2);
+            const double steering_angle = 0.5*2*(transform_waypoint.position.y)/pow(d, 2);
 
             ackermann_msgs::AckermannDriveStamped drive_msg;
             drive_msg.header.stamp = ros::Time::now();
-            drive_msg.header.frame_id = "ego_racecar/base_link";
+            drive_msg.header.frame_id = "base_link";
             drive_msg.drive.steering_angle = steering_angle;
             
             if (steering_angle > 0.41)
@@ -420,28 +420,200 @@ void RRT::poseCallback(const geometry_msgs::PoseStamped::ConstPtr& pose_msg)
 
             if (abs(steering_angle) < 0.1745)
             {
-                drive_msg.drive.speed = 4.5;
+                drive_msg.drive.speed = SPEED;
             }
             else if (abs(steering_angle) >= 0.1745 && abs(steering_angle) < 0.3491)
             {
-                drive_msg.drive.speed = 4.5;
+                drive_msg.drive.speed = SPEED;
             }
             else
             {
-                drive_msg.drive.speed = 4.0;
+                drive_msg.drive.speed = SPEED;
             }
 
-            ROS_INFO("Publishing velocity");
+            // ROS_INFO("Publishing velocity original");
+            bool_path_found = true;
 
             drive_pub_.publish(drive_msg);
             // ROS_INFO("Publish to drive!");
 
             visualize_trackpoints(goal_waypoint.position.x, goal_waypoint.position.y, waypoint.x, waypoint.y);
 
-            visualize_tree(tree);
+            // visualize_tree(tree);
 
             break;
         }
+    }
+
+    if (bool_path_found != true)
+    {
+        
+        auto waypoint_options = findWaypointOptions(current_pose);
+        // waypoint_options.push_back(waypoint);
+        ROS_INFO("inside else %d", waypoint_options.size());
+
+        int aliter_max_iters_ = 1000;
+
+        for (int j = 0; j < waypoint_options.size(); j++)
+        {   
+            ROS_INFO("LOOP: %d", j);
+            const auto waypoint = waypoint_options[j];
+            visualize_trackpoints(waypoint.x, waypoint.y, waypoint.x, waypoint.y);
+
+
+            std::vector<Node> tree;
+
+            tree.push_back(Node(pose_msg->pose.position.x, pose_msg->pose.position.y, 0.0, -1));
+
+            int count = 0;
+            // Main RRT loop
+            while (count < aliter_max_iters_)
+            {
+                count++;
+
+                // Sample a node
+                const auto sample_node = sample();
+
+                if (isCollided(sample_node[0], sample_node[1])) continue;
+
+                const int nearest_node_idx = nearestIdx(tree, sample_node);
+
+                Node new_node = steer(tree[nearest_node_idx], nearest_node_idx, sample_node);
+
+                const auto current_node_idx = tree.size();
+
+                if (checkCollision(tree[nearest_node_idx], new_node))
+                {
+                    continue;
+                    ROS_INFO("Collision!");
+                }
+                else if (enable_rrt_star_)
+                {
+                    new_node.cost = cost(tree, new_node);
+                    const auto neighbors = near(tree, new_node);
+
+                    std::vector<bool> is_neighbor_collided;
+                    int best_neighbor = new_node.parent_idx;
+                    
+                    for (int i=0; i<neighbors.size(); i++)
+                    {
+                        const int near_node_idx = neighbors[i];
+
+                        if (checkCollision(tree[near_node_idx], new_node))
+                        {
+                            is_neighbor_collided.push_back(true);
+                            continue;
+                        }
+
+                        is_neighbor_collided.push_back(false);
+
+                        double cost = tree[near_node_idx].cost + lineCost(tree[near_node_idx], new_node);
+
+                        if (cost < new_node.cost)
+                        {
+                            new_node.cost = cost;
+                            new_node.parent_idx = near_node_idx;
+                            best_neighbor = near_node_idx;
+                        }
+                    }
+
+                    for (int i=0; i<neighbors.size(); i++)
+                    {
+                        if (is_neighbor_collided[i] || i == best_neighbor)
+                        {
+                            continue;
+                        }
+
+                        if (tree[neighbors[i]].cost > new_node.cost + lineCost(new_node, tree[neighbors[i]]))
+                        {
+                            tree[neighbors[i]].parent_idx = current_node_idx;
+                        }
+                    }
+                }
+
+                tree.push_back(new_node);
+
+                if (isGoal(new_node, waypoint.x, waypoint.y))\
+                {   
+                    // ROS_INFO("Inside first if");
+                    local_path_ = findPath(tree, new_node);
+                    // ROS_INFO("Path found");
+
+                    const auto local_waypoint_d = findLocalWaypoint(current_pose);
+                    const auto local_waypoint = local_waypoint_d.first;
+                    const double d = local_waypoint_d.second;
+
+                    geometry_msgs::Pose goal_waypoint;
+                    goal_waypoint.position.x = local_waypoint.x;
+                    goal_waypoint.position.y = local_waypoint.y;
+                    goal_waypoint.position.z = 0;
+                    goal_waypoint.orientation.x = 0;
+                    goal_waypoint.orientation.y = 0;
+                    goal_waypoint.orientation.z = 0;
+                    goal_waypoint.orientation.w = 1;
+
+                    geometry_msgs::Pose transform_waypoint;
+                    tf2::doTransform(goal_waypoint, transform_waypoint, tf_map_to_laser_);
+
+                    const double steering_angle = 0.5*2*(transform_waypoint.position.y)/pow(d, 2);
+
+                    ackermann_msgs::AckermannDriveStamped drive_msg;
+                    drive_msg.header.stamp = ros::Time::now();
+                    drive_msg.header.frame_id = "base_link";
+                    drive_msg.drive.steering_angle = steering_angle;
+                    
+                    if (steering_angle > 0.41)
+                    {
+                        drive_msg.drive.steering_angle = 0.41;
+                    }
+                    else if (steering_angle < -0.41)
+                    {
+                        drive_msg.drive.steering_angle = -0.41;
+                    }
+
+                    if (abs(steering_angle) < 0.1745)
+                    {
+                        drive_msg.drive.speed = SPEED;
+                    }
+                    else if (abs(steering_angle) >= 0.1745 && abs(steering_angle) < 0.3491)
+                    {
+                        drive_msg.drive.speed = SPEED;
+                    }
+                    else
+                    {
+                        drive_msg.drive.speed = SPEED;
+                    }
+
+                    ROS_INFO("Publishing velocity alternative %d", j);
+                    bool_path_found = true;
+
+                    drive_pub_.publish(drive_msg);
+                    // ROS_INFO("Publish to drive!");
+
+                    visualize_trackpoints(goal_waypoint.position.x, goal_waypoint.position.y, waypoint.x, waypoint.y);
+
+                    // visualize_tree(tree);
+
+                    break;
+                }
+            }
+
+            if (bool_path_found == true)
+            {
+                break;
+            }
+
+        }
+    }
+
+    if (bool_path_found == false){
+        ROS_INFO("NO PATH FOUND! SETTING SPEED 0");
+        ackermann_msgs::AckermannDriveStamped drive_msg;
+        drive_msg.drive.steering_angle = 0.0;
+        drive_msg.header.stamp = ros::Time::now();
+        drive_msg.header.frame_id = "base_link";
+        drive_msg.drive.speed = 0.0;
+        drive_pub_.publish(drive_msg);
     }
 }
 
@@ -449,7 +621,7 @@ Waypoint RRT::findOptGlobalWaypoint(const Waypoint current_pose)
 {
     try
     {
-        tf_map_to_laser_ = tf_buffer_.lookupTransform("ego_racecar/laser", "map", ros::Time(0));
+        tf_map_to_laser_ = tf_buffer_.lookupTransform("laser", "map", ros::Time(0));
     }
     catch (tf::TransformException& ex)
     {
@@ -496,7 +668,7 @@ std::vector<Waypoint> RRT::findWaypointOptions(const Waypoint current_pose)
 {
     try
     {
-        tf_map_to_laser_ = tf_buffer_.lookupTransform("ego_racecar/laser", "map", ros::Time(0));
+        tf_map_to_laser_ = tf_buffer_.lookupTransform("laser", "map", ros::Time(0));
     }
     catch(tf::TransformException& ex)
     {
@@ -537,7 +709,7 @@ std::vector<Waypoint> RRT::findWaypointOptions(const Waypoint current_pose)
             if (diff < waypoint_d)
             {
                 waypoint_d = diff;
-                waypoint_idx = i;
+                waypoint_idx = j;
             }
         }
 

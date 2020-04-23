@@ -126,6 +126,7 @@ class RRT
         double local_waypoint_tolerance_;
         double lookahead_d_;
         double local_lookahead_d_;
+	double SPEED;
 
         std::vector<size_t> new_obstacles_;
         int clear_obstacles_count_;
