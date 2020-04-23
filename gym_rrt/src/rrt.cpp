@@ -34,17 +34,21 @@ RRT::RRT(ros::NodeHandle &nh): nh_(nh), gen((std::random_device())()), tf2_liste
     }
 
     global_path_ = getOptimalWaypoints();
-    path_num_ = 4;
+    path_num_ = 6;
 
     std::string file1 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_inner2.csv";
     std::string file2 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_outer2.csv";
     std::string file3 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_inner3.csv";  
     std::string file4 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_outer3.csv";
+    std::string file5 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_outer4.csv";
+    std::string file6 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_inner4.csv";
 
     trajectory_options_.push_back(getTrackpoints(file1));
     trajectory_options_.push_back(getTrackpoints(file2));
     trajectory_options_.push_back(getTrackpoints(file3));
     trajectory_options_.push_back(getTrackpoints(file4));
+    trajectory_options_.push_back(getTrackpoints(file5));
+    trajectory_options_.push_back(getTrackpoints(file6));
 
     // ROS Subscribers
     scan_sub_ = nh_.subscribe("/scan", 1, &RRT::scanCallback, this);
