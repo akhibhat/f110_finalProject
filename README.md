@@ -6,7 +6,13 @@ For our final project, we attempt to implement a Closed-loop RRT planner along w
 
 The `gym_pp` folder contains code to run the pure pursuit algorithm in the gym environment.
 
+## Milestone 3: RRT* with multiple tracks!
+
+The `gym_rrt` folder contains the code to run the rrt* algorithm
+
 ## TODO
-- Optimizer to generate the trajectory
-- CL-RRT
-- MPC
+- [x] Follow the gap with multiple tracks
+- [x] Implement prediction for opponent car
+- [ ] Incorporate prediction into follow the gap
+- [ ] Generate a high level path using Dubins curve for MPC to track (Backup: Use RRT*)
+- [ ] MPC

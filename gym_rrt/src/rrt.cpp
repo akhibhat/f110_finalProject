@@ -10,7 +10,9 @@ RRT::~RRT()
 
 RRT::RRT(ros::NodeHandle &nh): nh_(nh), gen((std::random_device())()), tf2_listener_(tf_buffer_)
 {
-    filename_ = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_centre.csv";
+    folder_path_ = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/";
+
+    filename_ = folder_path_ + "waypoints_data/wp_centre.csv";
     delimiter_ = ",";
 
     // Load first Map from map_server
@@ -25,7 +27,7 @@ RRT::RRT(ros::NodeHandle &nh): nh_(nh), gen((std::random_device())()), tf2_liste
 
     try
     {
-        tf_laser_to_map_ = tf_buffer_.lookupTransform("map", "laser", ros::Time(0));
+        tf_laser_to_map_ = tf_buffer_.lookupTransform("map", "ego_racecar/laser", ros::Time(0));
     }
     catch(tf::TransformException& ex)
     {
@@ -34,21 +36,28 @@ RRT::RRT(ros::NodeHandle &nh): nh_(nh), gen((std::random_device())()), tf2_liste
     }
 
     global_path_ = getOptimalWaypoints();
-    path_num_ = 6;
+    path_num_ = 4;
 
-    std::string file1 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_inner2.csv";
-    std::string file2 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_outer2.csv";
-    std::string file3 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_inner3.csv";  
-    std::string file4 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_outer3.csv";
-    std::string file5 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_outer4.csv";
-    std::string file6 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_inner4.csv";
+// <<<<<<< HEAD
+    // std::string file1 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_inner2.csv";
+    // std::string file2 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_outer2.csv";
+    // std::string file3 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_inner3.csv";  
+    // std::string file4 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_outer3.csv";
+    // // std::string file5 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_outer4.csv";
+    // std::string file6 = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_inner4.csv";
+// =======
+    std::string file1 = folder_path_ + "waypoints_data/wp_inner2.csv";
+    std::string file2 = folder_path_ + "waypoints_data/wp_outer2.csv";
+    std::string file3 = folder_path_ + "waypoints_data/wp_inner3.csv";  
+    std::string file4 = folder_path_ + "waypoints_data/wp_outer3.csv";
+// >>>>>>> 73143cc98b01e3d3cd9e3273fdc6dd27742906b9
 
     trajectory_options_.push_back(getTrackpoints(file1));
     trajectory_options_.push_back(getTrackpoints(file2));
     trajectory_options_.push_back(getTrackpoints(file3));
     trajectory_options_.push_back(getTrackpoints(file4));
-    trajectory_options_.push_back(getTrackpoints(file5));
-    trajectory_options_.push_back(getTrackpoints(file6));
+    // trajectory_options_.push_back(getTrackpoints(file5));
+    // trajectory_options_.push_back(getTrackpoints(file6));
 
     // ROS Subscribers
     scan_sub_ = nh_.subscribe("/scan", 1, &RRT::scanCallback, this);
@@ -56,7 +65,7 @@ RRT::RRT(ros::NodeHandle &nh): nh_(nh), gen((std::random_device())()), tf2_liste
 
     // ROS publishers
     map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>("/dynamic_map", 1);
-    drive_pub_ = nh_.advertise<ackermann_msgs::AckermannDriveStamped>("/nav", 1);
+    drive_pub_ = nh_.advertise<ackermann_msgs::AckermannDriveStamped>("/drive", 1);
     waypoint_viz_pub_ = nh_.advertise<visualization_msgs::Marker>("waypoint_viz", 1);
     tree_viz_pub_ = nh_.advertise<visualization_msgs::Marker>("tree_viz", 1);
 
@@ -229,7 +238,7 @@ void RRT::scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
     // Update occupancy grid
     try
     {
-        tf_laser_to_map_ = tf_buffer_.lookupTransform("map", "laser", ros::Time(0));
+        tf_laser_to_map_ = tf_buffer_.lookupTransform("map", "ego_racecar/laser", ros::Time(0));
     }
     catch(tf::TransformException& e)
     {
@@ -410,7 +419,7 @@ void RRT::poseCallback(const geometry_msgs::PoseStamped::ConstPtr& pose_msg)
 
             ackermann_msgs::AckermannDriveStamped drive_msg;
             drive_msg.header.stamp = ros::Time::now();
-            drive_msg.header.frame_id = "base_link";
+            drive_msg.header.frame_id = "ego_racecar/base_link";
             drive_msg.drive.steering_angle = steering_angle;
             
             if (steering_angle > 0.41)
@@ -435,11 +444,9 @@ void RRT::poseCallback(const geometry_msgs::PoseStamped::ConstPtr& pose_msg)
                 drive_msg.drive.speed = SPEED;
             }
 
-            // ROS_INFO("Publishing velocity original");
             bool_path_found = true;
 
             drive_pub_.publish(drive_msg);
-            // ROS_INFO("Publish to drive!");
 
             visualize_trackpoints(goal_waypoint.position.x, goal_waypoint.position.y, waypoint.x, waypoint.y);
 
@@ -453,10 +460,8 @@ void RRT::poseCallback(const geometry_msgs::PoseStamped::ConstPtr& pose_msg)
     {
         
         auto waypoint_options = findWaypointOptions(current_pose);
-        // waypoint_options.push_back(waypoint);
-        ROS_INFO("inside else %d", waypoint_options.size());
 
-        int aliter_max_iters_ = 1000;
+        int aliter_max_iters = 1000;
 
         for (int j = 0; j < waypoint_options.size(); j++)
         {   
@@ -471,7 +476,7 @@ void RRT::poseCallback(const geometry_msgs::PoseStamped::ConstPtr& pose_msg)
 
             int count = 0;
             // Main RRT loop
-            while (count < aliter_max_iters_)
+            while (count < aliter_max_iters)
             {
                 count++;
 
@@ -539,9 +544,7 @@ void RRT::poseCallback(const geometry_msgs::PoseStamped::ConstPtr& pose_msg)
 
                 if (isGoal(new_node, waypoint.x, waypoint.y))\
                 {   
-                    // ROS_INFO("Inside first if");
                     local_path_ = findPath(tree, new_node);
-                    // ROS_INFO("Path found");
 
                     const auto local_waypoint_d = findLocalWaypoint(current_pose);
                     const auto local_waypoint = local_waypoint_d.first;
@@ -563,7 +566,7 @@ void RRT::poseCallback(const geometry_msgs::PoseStamped::ConstPtr& pose_msg)
 
                     ackermann_msgs::AckermannDriveStamped drive_msg;
                     drive_msg.header.stamp = ros::Time::now();
-                    drive_msg.header.frame_id = "base_link";
+                    drive_msg.header.frame_id = "ego_racecar/base_link";
                     drive_msg.drive.steering_angle = steering_angle;
                     
                     if (steering_angle > 0.41)
@@ -615,7 +618,7 @@ void RRT::poseCallback(const geometry_msgs::PoseStamped::ConstPtr& pose_msg)
         ackermann_msgs::AckermannDriveStamped drive_msg;
         drive_msg.drive.steering_angle = 0.0;
         drive_msg.header.stamp = ros::Time::now();
-        drive_msg.header.frame_id = "base_link";
+        drive_msg.header.frame_id = "ego_racecar/base_link";
         drive_msg.drive.speed = 0.0;
         drive_pub_.publish(drive_msg);
     }
@@ -625,7 +628,7 @@ Waypoint RRT::findOptGlobalWaypoint(const Waypoint current_pose)
 {
     try
     {
-        tf_map_to_laser_ = tf_buffer_.lookupTransform("laser", "map", ros::Time(0));
+        tf_map_to_laser_ = tf_buffer_.lookupTransform("ego_racecar/laser", "map", ros::Time(0));
     }
     catch (tf::TransformException& ex)
     {
@@ -672,7 +675,7 @@ std::vector<Waypoint> RRT::findWaypointOptions(const Waypoint current_pose)
 {
     try
     {
-        tf_map_to_laser_ = tf_buffer_.lookupTransform("laser", "map", ros::Time(0));
+        tf_map_to_laser_ = tf_buffer_.lookupTransform("ego_racecar/laser", "map", ros::Time(0));
     }
     catch(tf::TransformException& ex)
     {
@@ -746,12 +749,6 @@ std::pair<Node, double> RRT::findLocalWaypoint(const Waypoint& current_pose)
 
     return {closest_point, closest_dist_current_pose};
 }
-
-// Waypoint RRT::chooseWaypoint(const std::vector<Waypoint> waypoint_options)
-// {
-
-// }
-
 
 std::vector<double> RRT::sample()
 {
