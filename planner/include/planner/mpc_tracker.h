@@ -40,17 +40,14 @@ public:
 private:
 	ros::NodeHandle nh_;
 
-	vector<Vector3d> trajectory_ref_;
-
 public:
 
-	void get_params(ros::NodeHandle& nh);
-	void get_reference_traj();
-	void propagate_Dynamics(Eigen::VectorXd& state(nx), Eigen::VectorXd& input(nu), Eigen::VectorXd& next_state(nx), double dt);
-	void get_linear_dynamics(Matrix<double,nx,nx>& Ad, Matrix<double,nx, nu>& Bd, Matrix<double,nx,1>& hd, Matrix<double,nx,1>& x_op, Matrix<double,nu,1>& u_op);
-	void get_MPC_path();
-	void publish_MPC_path();
-	void visualize_MPC();
+	void getParams(ros::NodeHandle& nh);
+	void getReferenceTraj();
+	void getDynamics();
+	void getMPCpath();
+	void publishMPCpath();
+	void visualizeMPC();
 
 };
 
