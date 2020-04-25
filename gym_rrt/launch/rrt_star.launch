@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<launch>
+
+    <include file="$(find f1tenth_gym_ros)/launch/gym_bridge_host.launch"/>
+
+    <node pkg="gym_rrt" type="gym_rrt_node" name="rrt_start" output="screen"/>
+
+    <node pkg="gym_rrt" type="odom_listener.py" name="odom_listener" output="screen"/>
+
+</launch>
