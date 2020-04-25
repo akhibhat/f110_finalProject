@@ -18,6 +18,7 @@ find_package(catkin REQUIRED COMPONENTS
   visualization_msgs
   tf
   tf2_ros
+  message_generation
 )
 
 ## System dependencies are found with CMake's conventions
@@ -54,11 +55,11 @@ find_package(catkin REQUIRED COMPONENTS
 ##   * add every package in MSG_DEP_SET to generate_messages(DEPENDENCIES ...)
 
 ## Generate messages in the 'msg' folder
-# add_message_files(
-#   FILES
-#   Message1.msg
-#   Message2.msg
-# )
+add_message_files(
+  FILES
+  Endpoints.msg
+  Path.msg
+)
 
 ## Generate services in the 'srv' folder
 # add_service_files(
@@ -75,10 +76,15 @@ find_package(catkin REQUIRED COMPONENTS
 # )
 
 ## Generate added messages and services with any dependencies listed here
-# generate_messages(
-#   DEPENDENCIES
-#   ackermann_msgs#   geometry_msgs#   nav_msgs#   sensor_msgs#   std_msgs#   visualization_msgs
-# )
+generate_messages(
+  DEPENDENCIES
+  ackermann_msgs
+  geometry_msgs
+  nav_msgs
+  sensor_msgs
+  std_msgs
+  visualization_msgs
+)
 
 ################################################
 ## Declare ROS dynamic reconfigure parameters ##
@@ -112,7 +118,7 @@ find_package(catkin REQUIRED COMPONENTS
 catkin_package(
   INCLUDE_DIRS include
   CATKIN_DEPENDS ackermann_msgs geometry_msgs nav_msgs roscpp rospy sensor_msgs
-  std_msgs visualization_msgs tf
+  std_msgs visualization_msgs tf message_runtime
   #  DEPENDS system_lib
 )
 

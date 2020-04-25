@@ -6,4 +6,6 @@
 
     <node pkg="planner" type="planner_node" name="planner" output="screen"/>
 
+    <!--node pkg="planner" type="dubins_path.py" name="dubins_path" output="screen"/-->
+
 </launch>

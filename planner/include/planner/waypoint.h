@@ -49,7 +49,7 @@ struct Waypoint
         speed = current_speed;
     }
 
-    Waypoint(const nav_msgs::Odometry::ConstPtr& odom_msg, double current_speed=0.1)
+    Waypoint(const nav_msgs::Odometry::ConstPtr& odom_msg)
     {
         x = odom_msg->pose.pose.position.x;
         y = odom_msg->pose.pose.position.y;
@@ -64,6 +64,6 @@ struct Waypoint
         mat.getRPY(roll, pitch, yaw);
 
         heading = yaw;
-        speed = current_speed;
+        speed = odom_msg->twist.twist.linear.x;
     }
 };
