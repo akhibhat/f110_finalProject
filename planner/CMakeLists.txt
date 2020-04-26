@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 2.8.3)
 project(planner)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
-# add_compile_options(-std=c++11)
+add_compile_options(-std=c++11)
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
@@ -22,7 +22,9 @@ find_package(catkin REQUIRED COMPONENTS
 )
 
 ## System dependencies are found with CMake's conventions
-# find_package(Boost REQUIRED COMPONENTS system)
+find_package(Eigen3 REQUIRED)
+find_package(OsqpEigen REQUIRED)
+find_package(Boost REQUIRED COMPONENTS system)
 
 
 ## Uncomment this if the package has a setup.py. This macro ensures
@@ -131,6 +133,7 @@ catkin_package(
 include_directories(
   include
   ${catkin_INCLUDE_DIRS}
+  ${EIGEN3_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
@@ -219,3 +222,5 @@ include_directories(
 # catkin_add_nosetests(test)
 add_executable(${PROJECT_NAME}_node src/planner.cpp)
 target_link_libraries(${PROJECT_NAME}_node ${catkin_LIBRARIES})
+
+target_link_libraries(${PROJECT_NAME}_node OsqpEigen::OsqpEigen osqp::osqp)
