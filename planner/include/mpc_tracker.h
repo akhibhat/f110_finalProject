@@ -40,17 +40,26 @@ public:
 private:
 	ros::NodeHandle nh_;
 
-	vector<Vector3d> trajectory_ref_;
+	vector<Eigen::Vector3d> ref_trajectory;
+	vector<Eigen::VectorXd> ref_input;
+	double current_speed;
+
+	int N, nx, nu;
+	double max_speed, max_steer, C_l, q_x, q_y, q_yaw, r_v, r_steer, Ts;
+
+	Eigen::Matrix<double, nx, nx> Q;
+    Eigen::Matrix<double, nu, nu> R;
+
 
 public:
 
 	void get_params(ros::NodeHandle& nh);
-	void get_reference_traj();
 	void propagate_Dynamics(Eigen::VectorXd& state(nx), Eigen::VectorXd& input(nu), Eigen::VectorXd& next_state(nx), double dt);
-	void get_linear_dynamics(Matrix<double,nx,nx>& Ad, Matrix<double,nx, nu>& Bd, Matrix<double,nx,1>& hd, Matrix<double,nx,1>& x_op, Matrix<double,nu,1>& u_op);
-	void get_MPC_path();
-	void publish_MPC_path();
-	void visualize_MPC();
+	void get_linear_dynamics_car(Eigen::Matrix<double,nx,nx>& Ad, Eigen::Matrix<double,nx, nu>& Bd, Eigen::Matrix<double,nx,1>& hd, Eigen::Matrix<double,nx,1>& state, Eigen::Matrix<double,nu,1>& input);
+	void get_half_space_constraints(vector<vector<double>>& constraint_points, double& A11, double& A12, double& A21, double &A22, double& B11; double& B12);
+	void get_MPC_path(vector<Eigen::VectorXd>& ref_trajectory, vector<Eigen::VectorXd>& ref_input, double& current_speed);
+	void execute_MPC_path(Eigen::VectorXd& QPSolution);
+	void convert_waypoints_to_vector3d(vector<Waypoint>& waypoints);
 
 };
 
