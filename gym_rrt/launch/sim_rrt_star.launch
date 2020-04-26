@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<launch>
+
+    <node pkg="gym_rrt" type="gym_rrt_node" name="rrt_star" output="screen" />
+
+
+</launch>
