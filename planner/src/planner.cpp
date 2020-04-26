@@ -35,7 +35,6 @@ class Planner
         ros::Publisher map_pub_;
         ros::Publisher drive_pub_;
         ros::Publisher waypoint_viz_pub_;
-        ros::Publisher track_viz_pub_;
         ros::Publisher pub_pred_markers_;
         ros::Publisher endpoints_pub_;
 
@@ -44,13 +43,31 @@ class Planner
         double bubble_radius_;
         std::vector<std::vector<double>> best_gaps_;
         std::vector<std::vector<size_t>> best_gap_dist_;
-        double min_dist_;
         double gap_size_threshold_;
         double gap_threshold_;
         double inflation_r_;
         double gap_bubble_;
         bool too_close_;
-        bool run_start_;
+        double alpha_;
+
+        // Subscriber Topics
+        std::string scan_topic_;
+        std::string ego_odom_topic_;
+        std::string opp_odom_topic_;
+        std::string path_topic_;
+        std::string map_topic_;
+        
+        // Publisher topics
+        std::string drive_topic_;
+        std::string waypoint_topic_;
+        std::string costmap_topic_;
+        std::string endpoint_topic_;
+
+        // TF frames
+        std::string map_frame_;
+        std::string ego_base_frame_;
+        std::string opp_base_frame_;
+        std::string ego_laser_frame_;
 
         // Scan parameters
         size_t start_idx_;
@@ -89,34 +106,56 @@ class Planner
         geometry_msgs::Pose2D ego_car_;
         geometry_msgs::Pose2D opp_car_;
 
+        // MPC variables
+        std::vector<std::vector<double>> mpc_constraints_;
+
 
     public:
 
         Planner(ros::NodeHandle &nh) : tf2_listener_(tf_buffer_)
         {
             nh_ = nh;
-            lookahead_d_ = 2.0;
-            bubble_radius_ = 0.40;
-            min_dist_ = 0.0;
-            gap_size_threshold_ = 30;
-            gap_threshold_ = 5.0;
-            inflation_r_ = 3;
-            gap_bubble_ = 2.0;
+
+            // Tuning parameters
+            nh_.getParam("/lookahead_distance", lookahead_d_);
+            nh_.getParam("/bubble_radius", bubble_radius_);
+            nh_.getParam("/gap_threshold", gap_threshold_);
+            nh_.getParam("/inflation_radius", inflation_r_);
+            nh_.getParam("/gap_bubble", gap_bubble_);
+            nh_.getParam("/max_scan", max_scan_);
+            nh_.getParam("/delimiter", delimiter_);
+            nh_.getParam("/folder_path", folder_path_);
+            nh_.getParam("/collision_points", num_pts_collision_);
+            nh_.getParam("/gap_size_threshold", gap_size_threshold_);
+            nh_.getParam("/alpha", alpha_);
+
+            // Subscriber Topics
+            nh_.getParam("/scan_topic", scan_topic_);
+            nh_.getParam("/ego_odom", ego_odom_topic_);
+            nh_.getParam("/opp_odom", opp_odom_topic_);
+            nh_.getParam("/dubins_path", path_topic_);
+            nh_.getParam("/map", map_topic_);
+
+            // Publisher topics
+            nh_.getParam("/drive_topic", drive_topic_);
+            nh_.getParam("/waypoints", waypoint_topic_);
+            nh_.getParam("/costmap", costmap_topic_);
+            nh_.getParam("/endpoints", endpoint_topic_);
+
+            // TF Frames
+            nh_.getParam("/map_frame", map_frame_);
+            nh_.getParam("/ego_car", ego_base_frame_);
+            nh_.getParam("/opp_car", opp_base_frame_);
+            nh_.getParam("/ego_laser", ego_laser_frame_);
 
             truncate_ = false;
-            max_scan_ = 5.0;
-
-            truncate_ = false;
-
-            delimiter_ = ",";
-            folder_path_ = "/home/akhilesh/f110_ws/src/final_project";
+            
             optimal_waypoint_file_ = folder_path_ + "/waypoints_data/best_skirk_nei.csv";
             path_num_ = 4;
 
             clear_obstacles_count_ = 0;
 
             unique_id_ = 0;
-            num_pts_collision_ = 50;
 
             ROS_INFO("Initialized constant!");
         }
@@ -127,7 +166,7 @@ class Planner
         {
             ROS_INFO("Initializing publishers and subscribers...");
 
-            input_map_ = *(ros::topic::waitForMessage<nav_msgs::OccupancyGrid>("map", ros::Duration(2)));
+            input_map_ = *(ros::topic::waitForMessage<nav_msgs::OccupancyGrid>(map_topic_, ros::Duration(2)));
 
             if (input_map_.data.empty())
             {
@@ -136,21 +175,22 @@ class Planner
 
             ROS_INFO("Received first map!");
 
-            drive_pub_ = nh_.advertise<ackermann_msgs::AckermannDriveStamped>("/drive", 1);
-            waypoint_viz_pub_ = nh_.advertise<visualization_msgs::Marker>("waypoint_markers", 1);
-            map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>("/cost_map", 1);
-            track_viz_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/track_viz", 1000);
+            drive_pub_ = nh_.advertise<ackermann_msgs::AckermannDriveStamped>(drive_topic_, 1);
+            waypoint_viz_pub_ = nh_.advertise<visualization_msgs::Marker>(waypoint_topic_, 1);
+            map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>(costmap_topic_, 1);
             pub_pred_markers_ = nh_.advertise<visualization_msgs::MarkerArray>("/predicted_path", 100);
-            endpoints_pub_ = nh_.advertise<planner::Endpoints>("/waypoint", 1);
+            endpoints_pub_ = nh_.advertise<planner::Endpoints>(endpoint_topic_, 1);
 
-            scan_sub_ = nh_.subscribe("/scan", 1, &Planner::scanCallback, this);
-            opp_odom_sub_ = nh_.subscribe("/opp_odom", 1, &Planner::oppOdomCallback, this);
-            ego_odom_sub_ = nh_.subscribe("/odom", 1, &Planner::egoOdomCallback, this);
+            scan_sub_ = nh_.subscribe(scan_topic_, 1, &Planner::scanCallback, this);
+            opp_odom_sub_ = nh_.subscribe(opp_odom_topic_, 1, &Planner::oppOdomCallback, this);
+            ego_odom_sub_ = nh_.subscribe(ego_odom_topic_, 1, &Planner::egoOdomCallback, this);
+            // dubins_path_sub_ = nh_.subscribe(path_topic_, 1, &Planner::pathMPCCallback, this);
+
             ROS_INFO("Initialized publishers and subscribers!");
 
             try
             {
-                tf_laser_to_map_ = tf_buffer_.lookupTransform("map", "ego_racecar/laser", ros::Time(0));
+                tf_laser_to_map_ = tf_buffer_.lookupTransform(map_frame_, ego_laser_frame_, ros::Time(0));
             }
             catch(tf::TransformException& ex)
             {
@@ -218,7 +258,7 @@ class Planner
 
             ROS_DEBUG("Eliminated safety bubble!");
 
-            findbestGapIdx(filtered_ranges);
+            findbestGap(filtered_ranges);
         }
 
         void egoOdomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg)
@@ -236,8 +276,6 @@ class Planner
             mat.getRPY(roll, pitch, yaw);
 
             ego_car_.theta = yaw;
-            // ego_car_.velocity = odom_msg->twist.twist.linear.x;
-            // ego_car_.angular_velocity = odom_msg->twist.twist.angular.z;
 
             std::vector<Waypoint> waypoint_options;
 
@@ -248,7 +286,7 @@ class Planner
 
             auto best_waypoint = checkFeasibility(waypoint_options);
 
-            add_waypoint_viz(best_waypoint, "map", 0.0,1.0,0.0,1.0,0.2,0.2,0.2);
+            add_waypoint_viz(best_waypoint, map_frame_,0.0,1.0,0.0,1.0,0.2,0.2,0.2);
 
             planner::Endpoints extremes;
             extremes.start = ego_car_;
@@ -264,7 +302,7 @@ class Planner
 
             endpoints_pub_.publish(extremes);
 
-            publishPPSpeed(best_waypoint);
+            // publishPPSpeed(best_waypoint);
         }
 
         //This method predicts the path of the opponent car and updates the path as obstacles in the map
@@ -287,9 +325,6 @@ class Planner
             mat.getRPY(roll, pitch, yaw);
             
             opp_car_.theta = yaw;
-
-            //linear model weight factor
-            double alpha = 0.8; //tunabel parameter
 
             //container to store the predicted poses of opponent car
             std::vector<double> x_opp_car_poses;
@@ -314,9 +349,8 @@ class Planner
             for(int i=0; i<=5; i++)
             {
 
-                double final_steering_angle = (1 - pow(alpha, i))*(pp_steering_angle)*3; //*3 is tunable parameter
+                double final_steering_angle = (1 - pow(alpha_, i))*(pp_steering_angle)*3; //*3 is tunable parameter
                 double net_heading = initial_heading + final_steering_angle;
-                // ROS_INFO("pp_steering_angle: %f iteration i = %d", steering_angle, i);
 
                 next_x_opp = next_x_opp + opp_vel*(cos(net_heading))*0.1; //(no of iterations * 0.1 = 1 second)
                 next_y_opp = next_y_opp + opp_vel*(sin(net_heading))*0.1;
@@ -325,7 +359,6 @@ class Planner
                 current_pose.x = next_x_opp;
                 current_pose.y = next_y_opp;
                 current_pose.heading = net_heading;
-
 
                 x_opp_car_poses.push_back(next_x_opp);
                 y_opp_car_poses.push_back(next_y_opp);
@@ -358,7 +391,7 @@ class Planner
             for(size_t i=0; i<x_poses_ego_vehicle.size(); i++)
             {
                 visualization_msgs::Marker point;
-                point.header.frame_id = "map";
+                point.header.frame_id = map_frame_;
                 point.header.stamp = ros::Time::now();
                 point.ns = "point_123";
                 point.action =visualization_msgs::Marker::ADD;
@@ -390,7 +423,7 @@ class Planner
 
             // Transform the waypoint to base_link frame
             geometry_msgs::TransformStamped map_to_opp_base_link;
-            map_to_opp_base_link = tf_buffer_.lookupTransform("opp_racecar/base_link", "map", ros::Time(0));
+            map_to_opp_base_link = tf_buffer_.lookupTransform(opp_base_frame_, map_frame_, ros::Time(0));
 
             geometry_msgs::Pose goal_waypoint;
             goal_waypoint.position.x = global_path_[best_waypoint].x;
@@ -435,7 +468,7 @@ class Planner
             geometry_msgs::TransformStamped tf_map_to_opp_base_link_;
             try
             {
-                tf_map_to_opp_base_link_ = tf_buffer_.lookupTransform("opp_racecar/base_link", "map", ros::Time(0));
+                tf_map_to_opp_base_link_ = tf_buffer_.lookupTransform(opp_base_frame_, map_frame_, ros::Time(0));
             }
             catch(tf::TransformException& ex)
             {
@@ -468,7 +501,7 @@ class Planner
         {
             try
             {
-                tf_laser_to_map_ = tf_buffer_.lookupTransform("map", "ego_racecar/laser", ros::Time(0));
+                tf_laser_to_map_ = tf_buffer_.lookupTransform(map_frame_, ego_laser_frame_, ros::Time(0));
             }
             catch(tf::TransformException& e)
             {
@@ -573,7 +606,7 @@ class Planner
             }
         }
 
-        void findbestGapIdx(const std::vector<double>& scan_ranges)
+        void findbestGap(const std::vector<double>& scan_ranges)
         {
             size_t max_start_idx = 0;
             size_t max_size_ = 0;
@@ -600,14 +633,25 @@ class Planner
                     current_size = 0;
                     std::vector<double> gap;
                     std::vector<size_t> gap_dist;
+                    std::vector<double> start_gap_constraint;
+                    std::vector<double> end_gap_constraint;
+
                     gap.push_back(angle_increment_*(max_start_idx-scan_ranges.size()/2));
                     gap.push_back(angle_increment_*(max_start_idx+max_size_-1-scan_ranges.size()/2));
             
                     gap_dist.push_back(scan_ranges[max_start_idx]);
                     gap_dist.push_back(scan_ranges[max_start_idx+max_size_-1]);
             
+                    start_gap_constraint.push_back(scan_ranges[max_start_idx] * cos(ego_car_.yaw));
+                    start_gap_constraint.push_back(scan_ranges[max_start_idx] * sin(ego_car_.yaw));
+                    
+                    end_gap_constraint.push_back(scan_ranges[max_start_idx+max_size_-1] * cos(ego_car_.yaw));
+                    end_gap_constraint.push_back(scan_ranges[max_start_idx+max_size_-1] * sin(ego_car_.yaw));
+
                     best_gaps_.push_back(gap);
                     best_gap_dist_.push_back(gap_dist);
+                    mpc_constraints_.push_back(start_gap_constraint);
+                    mpc_constraints_.push_back(end_gap_constraint);
                 }
                 current_idx++;
             }
@@ -619,14 +663,25 @@ class Planner
 
                 std::vector<double> gap;
                 std::vector<size_t> gap_dist;
+                std::vector<double> start_gap_constraint;
+                std::vector<double> end_gap_constraint;
+
                 gap.push_back(angle_increment_*(max_start_idx-scan_ranges.size()/2));
                 gap.push_back(angle_increment_*(max_start_idx+max_size_-1-scan_ranges.size()/2));
         
                 gap_dist.push_back(scan_ranges[max_start_idx]);
                 gap_dist.push_back(scan_ranges[max_start_idx+max_size_-1]);
         
+                start_gap_constraint.push_back(scan_ranges[max_start_idx] * cos(ego_car_.yaw));
+                start_gap_constraint.push_back(scan_ranges[max_start_idx] * sin(ego_car_.yaw));
+
+                end_gap_constraint.push_back(scan_ranges[max_start_idx+max_size_-1] * cos(ego_car_.yaw));
+                end_gap_constraint.push_back(scan_ranges[max_start_idx+max_size_-1] * sin(ego_car_.yaw));
+
                 best_gaps_.push_back(gap);
                 best_gap_dist_.push_back(gap_dist);
+                mpc_constraints_.push_back(start_gap_constraint);
+                mpc_constraints_.push_back(end_gap_constraint);
             }
         }
 
@@ -634,7 +689,7 @@ class Planner
         {
             try
             {
-                tf_map_to_laser_ = tf_buffer_.lookupTransform("ego_racecar/laser", "map", ros::Time(0));
+                tf_map_to_laser_ = tf_buffer_.lookupTransform(ego_laser_frame_, map_frame_, ros::Time(0));
             }
             catch (tf::TransformException& ex)
             {
@@ -685,7 +740,7 @@ class Planner
         {
             try
             {
-                tf_map_to_laser_ = tf_buffer_.lookupTransform("ego_racecar/laser", "map", ros::Time(0));
+                tf_map_to_laser_ = tf_buffer_.lookupTransform(ego_laser_frame_, map_frame_, ros::Time(0));
             }
             catch (tf::TransformException& ex)
             {
@@ -742,7 +797,7 @@ class Planner
         {
             try
             {
-                tf_map_to_laser_ = tf_buffer_.lookupTransform("ego_racecar/laser", "map", ros::Time(0));
+                tf_map_to_laser_ = tf_buffer_.lookupTransform(ego_laser_frame_, map_frame_, ros::Time(0));
             }
             catch(tf::TransformException& ex)
             {
@@ -768,7 +823,7 @@ class Planner
             
             try
             {
-                tf_opp_to_ego_ = tf_buffer_.lookupTransform("ego_racecar/base_link", "opp_racecar/base_link", ros::Time(0));
+                tf_opp_to_ego_ = tf_buffer_.lookupTransform(ego_base_frame_, opp_base_frame_, ros::Time(0));
             }
             catch(tf::TransformException& ex)
             {
@@ -954,43 +1009,6 @@ class Planner
             unique_id_++;
         }
 
-        void visualizeTracks(const std::vector<Waypoint> &waypoints)
-        {
-            visualization_msgs::MarkerArray track;
-            track.markers.resize(waypoints.size());
-
-            for (int i=0; i<waypoints.size(); i++)
-            {
-                visualization_msgs::Marker waypoint;
-                waypoint.header.frame_id = "map";
-                waypoint.header.stamp = ros::Time();
-                waypoint.ns = "tracks";
-                waypoint.id = i;
-                waypoint.type = visualization_msgs::Marker::CUBE;
-                waypoint.action = visualization_msgs::Marker::ADD;
-                waypoint.pose.position.x = waypoints[i].x;
-                waypoint.pose.position.y = waypoints[i].y;
-                waypoint.pose.position.z = 0.0;
-                waypoint.pose.orientation.x = 0.0;
-                waypoint.pose.orientation.y = 0.0;
-                waypoint.pose.orientation.z = 0.0;
-                waypoint.pose.orientation.w = 1.0;
-                waypoint.scale.x = 0.1;
-                waypoint.scale.y = 0.1;
-                waypoint.scale.z = 0.1;
-                waypoint.color.a = 0.5;
-                waypoint.color.r = 0.0;
-                waypoint.color.g = 0.0;
-                waypoint.color.b = 1.0;
-
-                track.markers[i] = waypoint;
-            }
-
-            ROS_INFO("Visualizing track");
-
-            track_viz_pub_.publish(track);
-        }
-
         bool checkCollision(Waypoint &waypoint)
         {
             bool collision = false;
@@ -1036,7 +1054,7 @@ class Planner
 
             try
             {
-                tf_map_to_laser_ = tf_buffer_.lookupTransform("ego_racecar/base_link", "map", ros::Time(0));
+                tf_map_to_laser_ = tf_buffer_.lookupTransform(ego_base_frame_, map_frame_, ros::Time(0));
             }
             catch(tf::TransformException& ex)
             {
@@ -1050,7 +1068,7 @@ class Planner
             
             ackermann_msgs::AckermannDriveStamped drive_msg;
             drive_msg.header.stamp = ros::Time::now();
-            drive_msg.header.frame_id = "ego_racecar/base_link";
+            drive_msg.header.frame_id = ego_base_frame_;
             drive_msg.drive.steering_angle = steering_angle;
 
             if (steering_angle > 0.41)

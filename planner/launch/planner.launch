@@ -2,10 +2,10 @@
 
 <launch>
 
+    <rosparam command="load" file="$(find planner)/config/params.yaml" />
+
     <include file="$(find f1tenth_gym_ros)/launch/gym_bridge_host.launch"/>
 
     <node pkg="planner" type="planner_node" name="planner" output="screen"/>
-
-    <!--node pkg="planner" type="dubins_path.py" name="dubins_path" output="screen"/-->
 
 </launch>
