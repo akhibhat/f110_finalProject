@@ -32,6 +32,7 @@ drive_topic: "/drive"
 waypoints: "/waypoint_markers"
 costmap: "/costmap"
 endpoints: "/waypoint"
+mpc: "/mpc"
 
 # TF Frames
 map_frame: "map"

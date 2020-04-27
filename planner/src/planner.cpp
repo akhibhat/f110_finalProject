@@ -36,6 +36,18 @@
 const int nx_ = 3;
 const int nu_ = 2;
 
+enum rviz_id{
+    CENTERLINE,
+    CENTERLINE_POINTS,
+    THETA_EST,
+    PREDICTION,
+    BORDERLINES,
+    TRAJECTORY_REF,
+    TRAJECTORIES,
+    MAX_THETA,
+    DEBUG
+};
+
 class Planner
 {
     private:
@@ -49,6 +61,7 @@ class Planner
         ros::Publisher drive_pub_;
         ros::Publisher waypoint_viz_pub_;
         ros::Publisher pub_pred_markers_;
+        ros::Publisher mpc_viz_pub_;
 
         // Other variables
         double lookahead_d_;
@@ -67,6 +80,7 @@ class Planner
         std::string ego_odom_topic_;
         std::string opp_odom_topic_;
         std::string map_topic_;
+        std::string mpc_topic_;
         
         // Publisher topics
         std::string drive_topic_;
@@ -155,6 +169,7 @@ class Planner
             nh_.getParam("/ego_odom", ego_odom_topic_);
             nh_.getParam("/opp_odom", opp_odom_topic_);
             nh_.getParam("/map", map_topic_);
+            nh_.getParam("/mpc", mpc_topic_);
 
             // Publisher topics
             nh_.getParam("/drive_topic", drive_topic_);
@@ -218,6 +233,7 @@ class Planner
             waypoint_viz_pub_ = nh_.advertise<visualization_msgs::Marker>(waypoint_topic_, 1);
             map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>(costmap_topic_, 1);
             pub_pred_markers_ = nh_.advertise<visualization_msgs::MarkerArray>("/predicted_path", 100);
+            mpc_viz_pub_ = nh_.advertise<visualization_msgs::MarkerArray>(mpc_topic_,10);
 
             scan_sub_ = nh_.subscribe(scan_topic_, 1, &Planner::scanCallback, this);
             opp_odom_sub_ = nh_.subscribe(opp_odom_topic_, 1, &Planner::oppOdomCallback, this);
@@ -368,15 +384,16 @@ class Planner
                 x += step_size_;
             }
 
-            // publishPPSpeed(best_waypoint);
-            if (ref_trajectory.size() > N_)
-            {
-                initMPC(ref_trajectory, ref_input);
-            }
-            else
-            {
-                publishPPSpeed(best_waypoint);
-            }
+            publishPPSpeed(best_waypoint);
+//            if (ref_trajectory.size() > N_)
+//            {
+//                // initMPC(ref_trajectory, ref_input);
+//                publishPPSpeed(best_waypoint);
+//            }
+//            else
+//            {
+//                publishPPSpeed(best_waypoint);
+//            }
         }
 
         //This method predicts the path of the opponent car and updates the path as obstacles in the map
@@ -601,6 +618,7 @@ class Planner
 
             for (int i=start; i<end; i++)
             {
+                theta += angle_increment;
                 const double hit = scan_msg->ranges[i];
                 if (std::isnan(hit) || std::isinf(hit)) continue;
 
@@ -620,7 +638,6 @@ class Planner
                         new_obstacles_.push_back(obstacleIdx[i]);
                     }
                 }
-                theta += angle_increment;
             }
 
             clear_obstacles_count_++;
@@ -715,7 +732,7 @@ class Planner
                 current_start = current_idx;
                 current_size = 0;
 
-                while ((current_idx < scan_ranges.size()) && (scan_ranges[current_idx] > gap_threshold_))
+                while ((current_idx < scan_ranges.size()) && (scan_ranges[current_idx] >= 0.1))
                 {
                     current_size++;
                     current_idx++;
@@ -730,24 +747,27 @@ class Planner
                     std::vector<size_t> gap_dist;
                     std::vector<double> start_gap_constraint;
                     std::vector<double> end_gap_constraint;
-
-                    gap.push_back(angle_increment_*(max_start_idx-scan_ranges.size()/2));
-                    gap.push_back(angle_increment_*(max_start_idx+max_size_-1-scan_ranges.size()/2));
             
                     gap_dist.push_back(scan_ranges[max_start_idx]);
                     gap_dist.push_back(scan_ranges[max_start_idx+max_size_-1]);
 
-                    const double start_x_base = scan_ranges[max_start_idx] * cos(ego_car_.theta);
-                    const double start_y_base = scan_ranges[max_start_idx] * sin(ego_car_.theta);
+                    const double start_angle = angle_increment_*(max_start_idx-scan_ranges.size()/2);
+                    const double end_angle = angle_increment_*(max_start_idx+max_size_-1-scan_ranges.size()/2);
 
-                    const double end_x_base = scan_ranges[max_start_idx+max_size_-1] * cos(ego_car_.theta);
-                    const double end_y_base = scan_ranges[max_start_idx+max_size_-1] * sin(ego_car_.theta);
+                    const double start_x_base = scan_ranges[max_start_idx] * cos(start_angle);
+                    const double start_y_base = scan_ranges[max_start_idx] * sin(start_angle);
+
+                    const double end_x_base = scan_ranges[max_start_idx+max_size_-1] * cos(end_angle);
+                    const double end_y_base = scan_ranges[max_start_idx+max_size_-1] * sin(end_angle);
 
                     const double start_x_map = start_x_base*cos(yaw) - start_y_base*sin(yaw) + translation.x;
                     const double start_y_map = start_x_base*sin(yaw) + start_y_base*cos(yaw) + translation.y;
 
                     const double end_x_map = end_x_base*cos(yaw) - end_y_base*sin(yaw) + translation.x;
                     const double end_y_map = end_x_base*sin(yaw) + end_y_base*cos(yaw) + translation.y;
+
+                    gap.push_back(start_angle);
+                    gap.push_back(end_angle);
             
                     start_gap_constraint.push_back(start_x_map);
                     start_gap_constraint.push_back(start_y_map);
@@ -772,18 +792,33 @@ class Planner
                 std::vector<size_t> gap_dist;
                 std::vector<double> start_gap_constraint;
                 std::vector<double> end_gap_constraint;
-
-                gap.push_back(angle_increment_*(max_start_idx-scan_ranges.size()/2));
-                gap.push_back(angle_increment_*(max_start_idx+max_size_-1-scan_ranges.size()/2));
         
                 gap_dist.push_back(scan_ranges[max_start_idx]);
                 gap_dist.push_back(scan_ranges[max_start_idx+max_size_-1]);
         
-                start_gap_constraint.push_back(scan_ranges[max_start_idx] * cos(ego_car_.theta));
-                start_gap_constraint.push_back(scan_ranges[max_start_idx] * sin(ego_car_.theta));
+                const double start_angle = angle_increment_*(max_start_idx-scan_ranges.size()/2);
+                const double end_angle = angle_increment_*(max_start_idx+max_size_-1-scan_ranges.size()/2);
 
-                end_gap_constraint.push_back(scan_ranges[max_start_idx+max_size_-1] * cos(ego_car_.theta));
-                end_gap_constraint.push_back(scan_ranges[max_start_idx+max_size_-1] * sin(ego_car_.theta));
+                const double start_x_base = scan_ranges[max_start_idx] * cos(start_angle);
+                const double start_y_base = scan_ranges[max_start_idx] * sin(start_angle);
+
+                const double end_x_base = scan_ranges[max_start_idx+max_size_-1] * cos(end_angle);
+                const double end_y_base = scan_ranges[max_start_idx+max_size_-1] * sin(end_angle);
+
+                const double start_x_map = start_x_base*cos(yaw) - start_y_base*sin(yaw) + translation.x;
+                const double start_y_map = start_x_base*sin(yaw) + start_y_base*cos(yaw) + translation.y;
+
+                const double end_x_map = end_x_base*cos(yaw) - end_y_base*sin(yaw) + translation.x;
+                const double end_y_map = end_x_base*sin(yaw) + end_y_base*cos(yaw) + translation.y;
+
+                gap.push_back(start_angle);
+                gap.push_back(end_angle);
+
+                start_gap_constraint.push_back(start_x_map);
+                start_gap_constraint.push_back(start_y_map);
+
+                end_gap_constraint.push_back(end_x_map);
+                end_gap_constraint.push_back(end_y_map);
 
                 best_gaps_.push_back(gap);
                 best_gap_dist_.push_back(gap_dist);
@@ -1248,7 +1283,6 @@ class Planner
 
             for (int i=0; i<N_+1; i++)
             {
-                std::cout << "Value of N is: " << N_ << "\n";
                 x_ref = ref_trajectory[i];
                 u_ref = ref_input[i];
                 getCarDynamics(Ad, Bd, hd, x_ref, u_ref);
@@ -1356,11 +1390,13 @@ class Planner
 
             if(!solver.solve()) std::cout << "";
 
-//            Eigen::VectorXd QPSolution = solver.getSolution();
+            Eigen::VectorXd QPSolution = solver.getSolution();
+
+            visualizeMPC(QPSolution, ref_trajectory);
 
 //            executeMPC(QPSolution);
-
-            // solver.clearSolver();
+//
+//            solver.clearSolver();
         }
 
         void getCarDynamics(Eigen::Matrix<double,nx_,nx_>& Ad, Eigen::Matrix<double,nx_,nu_>& Bd, Eigen::Matrix<double,nx_,1>& hd, Eigen::Matrix<double,nx_,1>& state, Eigen::Matrix<double,nu_,1>& input)
@@ -1439,6 +1475,81 @@ class Planner
             drive_msg.drive.steering_angle_velocity = 1.0;
 
             drive_pub_.publish(drive_msg);
+        }
+
+        void visualizeMPC(Eigen::VectorXd& QPSolution, std::vector<Eigen::VectorXd>& ref_traj)
+        {
+            visualization_msgs::Marker traj_ref;
+            geometry_msgs::Point p;
+
+            traj_ref.header.stamp = ros::Time::now();
+            traj_ref.header.frame_id = "map";
+            traj_ref.id = rviz_id::TRAJECTORY_REF;
+            traj_ref.ns = "reference_traj";
+            traj_ref.type = visualization_msgs::Marker::LINE_STRIP;
+            traj_ref.scale.x = traj_ref.scale.y = 0.04;
+            traj_ref.scale.z = 0.02;
+            traj_ref.action = visualization_msgs::Marker::ADD;
+            traj_ref.pose.orientation.w = 1.0;
+            traj_ref.color.g = 1.0;
+            traj_ref.color.a = 1.0;
+
+            for (int i=0; i<ref_traj.size(); i++)
+            {
+                p.x = ref_traj[i](0);
+                p.y = ref_traj[i](1);
+
+                traj_ref.points.push_back(p);
+            }
+
+            visualization_msgs::Marker pred_dots;
+            pred_dots.header.frame_id = "map";
+            pred_dots.id = rviz_id::PREDICTION;
+            pred_dots.ns = "predicted_pose";
+            pred_dots.type = visualization_msgs::Marker::POINTS;
+            pred_dots.scale.x = 0.08;
+            pred_dots.scale.y = 0.08;
+            pred_dots.scale.z = 0.08;
+            pred_dots.action = visualization_msgs::Marker::ADD;
+            pred_dots.pose.orientation.w = 1.0;
+            pred_dots.color.g = 1.0;
+            pred_dots.color.r = 1.0;
+            pred_dots.color.a = 1.0;
+            for (int i=0; i<N_+1; i++)
+            {
+                geometry_msgs::Point p;
+                p.x = QPSolution(i*nx_);
+                p.y = QPSolution(i*nx_+1);
+                pred_dots.points.push_back(p);
+            }
+
+            visualization_msgs::Marker borderlines;
+            borderlines.header.frame_id = "map";
+            borderlines.id = rviz_id::BORDERLINES;
+            borderlines.ns = "borderlines";
+            borderlines.type = visualization_msgs::Marker::LINE_STRIP;
+            borderlines.scale.x = 0.08;
+            borderlines.scale.y = 0.08;
+            borderlines.action = visualization_msgs::Marker::ADD;
+            borderlines.pose.orientation.w = 1.0;
+            borderlines.color.r = 1.0;
+            borderlines.color.a = 1.0;
+
+            for (int i=0; i<mpc_constraints_.size(); i++)
+            {
+                geometry_msgs::Point border_point;
+                border_point.x = mpc_constraints_[i][0];
+                border_point.y = mpc_constraints_[i][1];
+
+                borderlines.points.push_back(border_point);
+            }
+
+            visualization_msgs::MarkerArray mpc_markers;
+            // mpc_markers.markers.push_back(pred_dots);
+            mpc_markers.markers.push_back(borderlines);
+            // mpc_markers.markers.push_back(traj_ref);
+
+            mpc_viz_pub_.publish(mpc_markers);
         }
 
 };
