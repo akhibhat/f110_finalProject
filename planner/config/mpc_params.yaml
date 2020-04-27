@@ -10,7 +10,7 @@ nx: 3
 nu: 2
 
 #Time Horizon and time-difference for each step
-N: 20
+N: 10
 Ts: 0.04
 
 #input limits
@@ -22,5 +22,7 @@ ACCELERATION_MAX: 15.0
 DECELERATION_MAX: 30.0
 
 C_l: 0.35
+
+step_size: 0.1
 
 

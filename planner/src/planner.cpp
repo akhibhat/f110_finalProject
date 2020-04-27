@@ -13,8 +13,6 @@
 #include <visualization_msgs/MarkerArray.h>
 #include <nav_msgs/OccupancyGrid.h>
 #include <geometry_msgs/Pose2D.h>
-#include <planner/Endpoints.h>
-#include <planner/Path.h>
 
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
@@ -32,8 +30,8 @@
 #include <chrono>
 #include <boost/algorithm/string.hpp>
 
-#include "planner/dubins_path.h"
 #include "planner/waypoint.h"
+#include "planner/dubins.h"
 
 const int nx_ = 3;
 const int nu_ = 2;
@@ -47,12 +45,10 @@ class Planner
         ros::Subscriber ego_odom_sub_;
         ros::Subscriber scan_sub_;
         ros::Subscriber opp_odom_sub_;
-        ros::Subscriber dubins_path_sub_;
         ros::Publisher map_pub_;
         ros::Publisher drive_pub_;
         ros::Publisher waypoint_viz_pub_;
         ros::Publisher pub_pred_markers_;
-        ros::Publisher endpoints_pub_;
 
         // Other variables
         double lookahead_d_;
@@ -70,14 +66,12 @@ class Planner
         std::string scan_topic_;
         std::string ego_odom_topic_;
         std::string opp_odom_topic_;
-        std::string path_topic_;
         std::string map_topic_;
         
         // Publisher topics
         std::string drive_topic_;
         std::string waypoint_topic_;
         std::string costmap_topic_;
-        std::string endpoint_topic_;
 
         // TF frames
         std::string map_frame_;
@@ -125,9 +119,9 @@ class Planner
 
         // MPC variables
         std::vector<std::vector<double>> mpc_constraints_;
-        // vector<Eigen::Vector3d> ref_trajectory_;
-        // vector<Eigen::VectorXd> ref_input_;
-
+        double step_size_;
+        double max_angular_vel_;
+        
         int N_;
         // const int nx_ = 3;
         // const int nu_ = 2;
@@ -160,14 +154,12 @@ class Planner
             nh_.getParam("/scan_topic", scan_topic_);
             nh_.getParam("/ego_odom", ego_odom_topic_);
             nh_.getParam("/opp_odom", opp_odom_topic_);
-            nh_.getParam("/dubins_path", path_topic_);
             nh_.getParam("/map", map_topic_);
 
             // Publisher topics
             nh_.getParam("/drive_topic", drive_topic_);
             nh_.getParam("/waypoints", waypoint_topic_);
             nh_.getParam("/costmap", costmap_topic_);
-            nh_.getParam("/endpoints", endpoint_topic_);
 
             // TF Frames
             nh_.getParam("/map_frame", map_frame_);
@@ -186,6 +178,7 @@ class Planner
             nh_.getParam("q_yaw", q_yaw_);
             nh_.getParam("r_v", r_v_);
             nh_.getParam("r_steer", r_steer_);
+            nh_.getParam("step_size", step_size_);
 
             truncate_ = false;
             
@@ -195,6 +188,8 @@ class Planner
             clear_obstacles_count_ = 0;
 
             unique_id_ = 0;
+
+            max_angular_vel_ = 3.2;
 
             Q_.setZero();
             R_.setZero();
@@ -223,12 +218,10 @@ class Planner
             waypoint_viz_pub_ = nh_.advertise<visualization_msgs::Marker>(waypoint_topic_, 1);
             map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>(costmap_topic_, 1);
             pub_pred_markers_ = nh_.advertise<visualization_msgs::MarkerArray>("/predicted_path", 100);
-            endpoints_pub_ = nh_.advertise<planner::Endpoints>(endpoint_topic_, 1);
 
             scan_sub_ = nh_.subscribe(scan_topic_, 1, &Planner::scanCallback, this);
             opp_odom_sub_ = nh_.subscribe(opp_odom_topic_, 1, &Planner::oppOdomCallback, this);
             ego_odom_sub_ = nh_.subscribe(ego_odom_topic_, 1, &Planner::egoOdomCallback, this);
-            dubins_path_sub_ = nh_.subscribe(path_topic_, 1, &Planner::pathMPCCallback, this);
 
             ROS_INFO("Initialized publishers and subscribers!");
 
@@ -340,21 +333,50 @@ class Planner
 
             add_waypoint_viz(best_waypoint, map_frame_,0.0,1.0,0.0,1.0,0.2,0.2,0.2);
 
-            planner::Endpoints extremes;
-            extremes.start = ego_car_;
+            double start[] = { ego_car_.x, ego_car_.y, ego_car_.theta };
+            double goal[] = {best_waypoint.x, best_waypoint.y, best_waypoint.heading};
 
-            geometry_msgs::Pose2D end;
-            end.x = best_waypoint.x;
-            end.y = best_waypoint.y;
-            end.theta = best_waypoint.heading;
+            double turning_radius = current_ego_vel_/max_angular_vel_; //TODO
 
-            extremes.goal = end;
-            extremes.vel = current_ego_vel_;
-            extremes.dt = 0.1;
+            DubinsPath path;
+            double x = 0.0;
 
-            endpoints_pub_.publish(extremes);
+            std::vector<Eigen::VectorXd> ref_trajectory;
+            std::vector<Eigen::VectorXd> ref_input;
+
+            dubins_init(start, goal, turning_radius, &path);
+            double path_length = dubins_path_length(&path);
+
+            while (x < path_length)
+            {
+                double q[3];
+                dubins_path_sample(&path, x, q);
+
+                Eigen::VectorXd traj(nx_);
+                Eigen::VectorXd input(nu_);
+
+                traj(0) = q[0];
+                traj(1) = q[1];
+                traj(2) = q[2];
+                
+                input(1) = 0.0;
+                input(0) = current_ego_vel_;
+
+                ref_trajectory.push_back(traj);
+                ref_input.push_back(input);
+
+                x += step_size_;
+            }
 
             // publishPPSpeed(best_waypoint);
+            if (ref_trajectory.size() > N_)
+            {
+                initMPC(ref_trajectory, ref_input);
+            }
+            else
+            {
+                publishPPSpeed(best_waypoint);
+            }
         }
 
         //This method predicts the path of the opponent car and updates the path as obstacles in the map
@@ -431,27 +453,6 @@ class Planner
                     }
                 }
             }
-        }
-
-        void pathMPCCallback(const planner::Path::ConstPtr& path_msg)
-        {
-            std::vector<Eigen::VectorXd> ref_trajectory;
-            std::vector<Eigen::VectorXd> ref_input;
-
-            ref_trajectory = toVector3d(path_msg);
-
-            //TODO generate ref_input vector
-            for (int i=0; i<ref_trajectory.size(); i++)
-            {
-                Eigen::VectorXd input(nu_);
-
-                input(0) = 0.0;
-                input(1) = current_ego_vel_;
-
-                ref_input.push_back(input);
-            }
-
-            initMPC(ref_trajectory, ref_input);
         }
 
         void PublishPredictionMarkers(const std::vector<double>& x_poses_ego_vehicle, const std::vector<double>& y_poses_ego_vehicle)
@@ -686,6 +687,28 @@ class Planner
             size_t current_size;
 
             size_t current_idx = 0;
+
+            try
+            {
+                tf_laser_to_map_ = tf_buffer_.lookupTransform(map_frame_, ego_laser_frame_, ros::Time(0));
+            }
+            catch(tf::TransformException& ex)
+            {
+                ROS_ERROR("%s", ex.what());
+                ros::Duration(0.1).sleep();
+            }
+
+            const auto translation = tf_laser_to_map_.transform.translation;
+            const auto rotation = tf_laser_to_map_.transform.rotation;
+
+            tf2::Quaternion q(rotation.x,
+                              rotation.y,
+                              rotation.z,
+                              rotation.w);
+            tf2::Matrix3x3 mat(q);
+
+            double roll, pitch, yaw;
+            mat.getRPY(roll, pitch, yaw);
             
             while (current_idx < scan_ranges.size())
             {
@@ -713,12 +736,24 @@ class Planner
             
                     gap_dist.push_back(scan_ranges[max_start_idx]);
                     gap_dist.push_back(scan_ranges[max_start_idx+max_size_-1]);
+
+                    const double start_x_base = scan_ranges[max_start_idx] * cos(ego_car_.theta);
+                    const double start_y_base = scan_ranges[max_start_idx] * sin(ego_car_.theta);
+
+                    const double end_x_base = scan_ranges[max_start_idx+max_size_-1] * cos(ego_car_.theta);
+                    const double end_y_base = scan_ranges[max_start_idx+max_size_-1] * sin(ego_car_.theta);
+
+                    const double start_x_map = start_x_base*cos(yaw) - start_y_base*sin(yaw) + translation.x;
+                    const double start_y_map = start_x_base*sin(yaw) + start_y_base*cos(yaw) + translation.y;
+
+                    const double end_x_map = end_x_base*cos(yaw) - end_y_base*sin(yaw) + translation.x;
+                    const double end_y_map = end_x_base*sin(yaw) + end_y_base*cos(yaw) + translation.y;
             
-                    start_gap_constraint.push_back(scan_ranges[max_start_idx] * cos(ego_car_.theta));
-                    start_gap_constraint.push_back(scan_ranges[max_start_idx] * sin(ego_car_.theta));
+                    start_gap_constraint.push_back(start_x_map);
+                    start_gap_constraint.push_back(start_y_map);
                     
-                    end_gap_constraint.push_back(scan_ranges[max_start_idx+max_size_-1] * cos(ego_car_.theta));
-                    end_gap_constraint.push_back(scan_ranges[max_start_idx+max_size_-1] * sin(ego_car_.theta));
+                    end_gap_constraint.push_back(end_x_map);
+                    end_gap_constraint.push_back(end_y_map);
 
                     best_gaps_.push_back(gap);
                     best_gap_dist_.push_back(gap_dist);
@@ -1195,8 +1230,8 @@ class Planner
             g.setZero();
 
             // the upper and lower bound constraint vectors
-            Eigen::VectorXd lb(2*(N_+1)*nx_ + (N_+1)*nu_);
-            Eigen::VectorXd ub(2*(N_+1)*nx_ + (N_+1)*nu_);
+            Eigen::VectorXd lb((N_+1)*nx_ + 2*(N_+1) + (N_+1)*nu_);
+            Eigen::VectorXd ub((N_+1)*nx_ + 2*(N_+1) + (N_+1)*nu_);
 
             // define the matrices (vectors) for state and control references
             // at each time step
@@ -1213,6 +1248,7 @@ class Planner
 
             for (int i=0; i<N_+1; i++)
             {
+                std::cout << "Value of N is: " << N_ << "\n";
                 x_ref = ref_trajectory[i];
                 u_ref = ref_input[i];
                 getCarDynamics(Ad, Bd, hd, x_ref, u_ref);
@@ -1243,7 +1279,7 @@ class Planner
                     {
                         for (int col=0; col<nx_; col++)
                         {
-                            A_c.insert((i+1)*nx_ + row, (N_+1)*nx_ + i*nu_ + col) = Bd(row, col);
+                            A_c.insert((i+1)*nx_ + row, i*nx_ + col) = Ad(row, col);
                         }
                     }
 
@@ -1318,33 +1354,13 @@ class Planner
 
             if(!solver.initSolver()) throw "failed to initialize solver";
 
-            if(!solver.solve()) return;
+            if(!solver.solve()) std::cout << "";
 
-            Eigen::VectorXd QPSolution = solver.getSolution();
+//            Eigen::VectorXd QPSolution = solver.getSolution();
 
-            executeMPC(QPSolution);
+//            executeMPC(QPSolution);
 
             // solver.clearSolver();
-        }
-
-        std::vector<Eigen::VectorXd> toVector3d(const planner::Path::ConstPtr& path_msg)
-        {
-            std::vector<geometry_msgs::Pose2D> dubinsPath = path_msg->path;
-
-            std::vector<Eigen::VectorXd> ref_trajectory;
-
-            for (int i=0; i<dubinsPath.size(); i++)
-            {
-                Eigen::VectorXd traj(nx_);
-                
-                traj(0) = dubinsPath[i].x;
-                traj(1) = dubinsPath[i].y;
-                traj(2) = dubinsPath[i].theta;
-
-                ref_trajectory.push_back(traj);
-            }
-
-            return ref_trajectory;
         }
 
         void getCarDynamics(Eigen::Matrix<double,nx_,nx_>& Ad, Eigen::Matrix<double,nx_,nu_>& Bd, Eigen::Matrix<double,nx_,1>& hd, Eigen::Matrix<double,nx_,1>& state, Eigen::Matrix<double,nu_,1>& input)
