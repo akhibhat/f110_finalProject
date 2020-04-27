@@ -11,7 +11,7 @@ nu: 2
 
 #Time Horizon and time-difference for each step
 N: 10
-Ts: 0.04
+Ts: 0.1
 
 #input limits
 max_speed: 12.00
