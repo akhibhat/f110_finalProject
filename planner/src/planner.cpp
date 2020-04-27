@@ -599,7 +599,8 @@ class Planner
             double theta = scan_msg->angle_min + start*angle_increment;
 
             for (int i=start; i<end; i++)
-            {
+            {	
+            	theta += angle_increment;
                 const double hit = scan_msg->ranges[i];
                 if (std::isnan(hit) || std::isinf(hit)) continue;
 
@@ -619,7 +620,7 @@ class Planner
                         new_obstacles_.push_back(obstacleIdx[i]);
                     }
                 }
-                theta += angle_increment;
+                
             }
 
             clear_obstacles_count_++;
@@ -1243,7 +1244,7 @@ class Planner
                     {
                         for (int col=0; col<nx_; col++)
                         {
-                            A_c.insert((i+1)*nx_ + row, (N_+1)*nx_ + i*nu_ + col) = Bd(row, col);
+                            A_c.insert((i+1)*nx_ + row, i*nx_ + col) = Ad(row, col);
                         }
                     }
 
