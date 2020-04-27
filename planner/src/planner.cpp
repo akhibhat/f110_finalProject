@@ -302,7 +302,7 @@ class Planner
 
             endpoints_pub_.publish(extremes);
 
-            // publishPPSpeed(best_waypoint);
+            publishPPSpeed(best_waypoint);
         }
 
         //This method predicts the path of the opponent car and updates the path as obstacles in the map
@@ -642,11 +642,11 @@ class Planner
                     gap_dist.push_back(scan_ranges[max_start_idx]);
                     gap_dist.push_back(scan_ranges[max_start_idx+max_size_-1]);
             
-                    start_gap_constraint.push_back(scan_ranges[max_start_idx] * cos(ego_car_.yaw));
-                    start_gap_constraint.push_back(scan_ranges[max_start_idx] * sin(ego_car_.yaw));
+                    start_gap_constraint.push_back(scan_ranges[max_start_idx] * cos(ego_car_.theta));
+                    start_gap_constraint.push_back(scan_ranges[max_start_idx] * sin(ego_car_.theta));
                     
-                    end_gap_constraint.push_back(scan_ranges[max_start_idx+max_size_-1] * cos(ego_car_.yaw));
-                    end_gap_constraint.push_back(scan_ranges[max_start_idx+max_size_-1] * sin(ego_car_.yaw));
+                    end_gap_constraint.push_back(scan_ranges[max_start_idx+max_size_-1] * cos(ego_car_.theta));
+                    end_gap_constraint.push_back(scan_ranges[max_start_idx+max_size_-1] * sin(ego_car_.theta));
 
                     best_gaps_.push_back(gap);
                     best_gap_dist_.push_back(gap_dist);
@@ -672,11 +672,11 @@ class Planner
                 gap_dist.push_back(scan_ranges[max_start_idx]);
                 gap_dist.push_back(scan_ranges[max_start_idx+max_size_-1]);
         
-                start_gap_constraint.push_back(scan_ranges[max_start_idx] * cos(ego_car_.yaw));
-                start_gap_constraint.push_back(scan_ranges[max_start_idx] * sin(ego_car_.yaw));
+                start_gap_constraint.push_back(scan_ranges[max_start_idx] * cos(ego_car_.theta));
+                start_gap_constraint.push_back(scan_ranges[max_start_idx] * sin(ego_car_.theta));
 
-                end_gap_constraint.push_back(scan_ranges[max_start_idx+max_size_-1] * cos(ego_car_.yaw));
-                end_gap_constraint.push_back(scan_ranges[max_start_idx+max_size_-1] * sin(ego_car_.yaw));
+                end_gap_constraint.push_back(scan_ranges[max_start_idx+max_size_-1] * cos(ego_car_.theta));
+                end_gap_constraint.push_back(scan_ranges[max_start_idx+max_size_-1] * sin(ego_car_.theta));
 
                 best_gaps_.push_back(gap);
                 best_gap_dist_.push_back(gap_dist);
