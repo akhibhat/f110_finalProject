@@ -384,16 +384,16 @@ class Planner
                 x += step_size_;
             }
 
-            publishPPSpeed(best_waypoint);
-//            if (ref_trajectory.size() > N_)
-//            {
-//                // initMPC(ref_trajectory, ref_input);
-//                publishPPSpeed(best_waypoint);
-//            }
-//            else
-//            {
-//                publishPPSpeed(best_waypoint);
-//            }
+//            publishPPSpeed(best_waypoint);
+            if (ref_trajectory.size() > N_)
+            {
+                initMPC(ref_trajectory, ref_input);
+                // publishPPSpeed(best_waypoint);
+            }
+            else
+            {
+                publishPPSpeed(best_waypoint);
+            }
         }
 
         //This method predicts the path of the opponent car and updates the path as obstacles in the map
@@ -716,12 +716,12 @@ class Planner
             }
 
             const auto translation = tf_laser_to_map_.transform.translation;
-            const auto rotation = tf_laser_to_map_.transform.rotation;
+            const auto orientation = tf_laser_to_map_.transform.rotation;
 
-            tf2::Quaternion q(rotation.x,
-                              rotation.y,
-                              rotation.z,
-                              rotation.w);
+            tf2::Quaternion q(orientation.x,
+                              orientation.y,
+                              orientation.z,
+                              orientation.w);
             tf2::Matrix3x3 mat(q);
 
             double roll, pitch, yaw;
@@ -732,7 +732,7 @@ class Planner
                 current_start = current_idx;
                 current_size = 0;
 
-                while ((current_idx < scan_ranges.size()) && (scan_ranges[current_idx] >= 0.1))
+                while ((current_idx < scan_ranges.size())  && (scan_ranges[current_idx] > 0.0))
                 {
                     current_size++;
                     current_idx++;
@@ -785,6 +785,7 @@ class Planner
 
             if (current_size > max_size_)
             {
+                ROS_INFO("Inside if loop");
                 max_start_idx = current_start;
                 max_size_ = current_size;
 
@@ -1388,7 +1389,7 @@ class Planner
 
             if(!solver.initSolver()) throw "failed to initialize solver";
 
-            if(!solver.solve()) std::cout << "";
+            if(!solver.solve()) return;
 
             Eigen::VectorXd QPSolution = solver.getSolution();
 
