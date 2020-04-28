@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(pure_pursuit)
+project(pure_pursuit_mihir)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 add_compile_options(-std=c++11)
@@ -16,6 +16,7 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   visualization_msgs
   tf
+  planner
 )
 
 ## System dependencies are found with CMake's conventions
@@ -110,9 +111,10 @@ find_package(Boost REQUIRED COMPONENTS system)
 ## CATKIN_DEPENDS: catkin_packages dependent projects also need
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
-#  INCLUDE_DIRS include
+  INCLUDE_DIRS include
 #  LIBRARIES pure_pursuit
-  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy sensor_msgs std_msgs visualization_msgs
+  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy sensor_msgs std_msgs
+  visualization_msgs planner
 #  DEPENDS system_lib
 )
 
@@ -142,7 +144,8 @@ include_directories(
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
 add_executable(${PROJECT_NAME}_node2 src/pure_pursuit_node.cpp)
-add_executable(${PROJECT_NAME}_akhilesh src/pure_pursuit_akhilesh.cpp)
+add_executable(${PROJECT_NAME}_akhilesh src/pure_pursuit_akhilesh.cpp
+    src/dubins.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the

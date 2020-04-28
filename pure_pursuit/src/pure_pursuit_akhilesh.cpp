@@ -10,6 +10,7 @@
 #include <ackermann_msgs/AckermannDriveStamped.h>
 #include <visualization_msgs/Marker.h>
 #include <visualization_msgs/MarkerArray.h>
+#include <planner/dubins.h>
 
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
@@ -80,6 +81,8 @@ class PurePursuit
             R_.diagonal() << r_v_, r_steer_;
 
             truncate_ = false;
+
+            step_size_ = 0.1;
 
             ROS_INFO("Initialized constants!");
         }
@@ -271,21 +274,15 @@ class PurePursuit
             return transformed_waypoints;
         }
 
-        double PPAngle(const Waypoint& current_pose)
+        double PPAngle(const Waypoint& best_waypoint)
         {   
-            // Transform waypoints to baselink frame
-            const auto transformed_waypoints = transform(global_path_, current_pose);
-
-            // Find best waypoint to track
-            const auto best_waypoint = find_best_waypoint(transformed_waypoints, lookahead_d_);
-
             // Transform the waypoint to base_link frame
             geometry_msgs::TransformStamped map_to_base_link;
             map_to_base_link = tf_buffer_.lookupTransform("base_link", "map", ros::Time(0));
 
             geometry_msgs::Pose goal_waypoint;
-            goal_waypoint.position.x = global_path_[best_waypoint].x;
-            goal_waypoint.position.y = global_path_[best_waypoint].y;
+            goal_waypoint.position.x = best_waypoint.x;
+            goal_waypoint.position.y = best_waypoint.y;
             goal_waypoint.position.z = 0;
             goal_waypoint.orientation.x = 0;
             goal_waypoint.orientation.y = 0;
@@ -1011,6 +1008,15 @@ class PurePursuit
             std::vector<double> ego_state1;
             ego_state1.push_back(ego_car_.x);
             ego_state1.push_back(ego_car_.y);
+            
+            // Transform waypoints to baselink frame
+            const auto transformed_waypoints = transform(global_path_, current_pose);
+
+            // Find best waypoint to track
+            auto best_waypoint_idx = find_best_waypoint(transformed_waypoints, lookahead_d_);
+
+            auto best_waypoint = global_path_[best_waypoint_idx];
+
 
             mpc_constraints_.push_back(ego_state1);
 
@@ -1052,7 +1058,7 @@ class PurePursuit
             double opp_vel = 2.5;
             // ROS_INFO("%f",opp_vel);
 
-            const double pp_steering_angle = PPAngle(current_pose);
+            const double pp_steering_angle = PPAngle(best_waypoint);
             // ROS_INFO()
             
 
@@ -1086,26 +1092,65 @@ class PurePursuit
 
             PublishMarkers(x_opp_car_poses, y_opp_car_poses);
 
+//            std::vector<Eigen::VectorXd> ref_trajectory;
+//            std::vector<Eigen::VectorXd> ref_input;
+//
+//            for(int i = 0; i < x_opp_car_poses.size(); i++)
+//            {
+//                Eigen::VectorXd traj(nx_);
+//                Eigen::VectorXd input(nu_);
+//
+//                traj(0) = x_opp_car_poses[i];
+//                traj(1) = y_opp_car_poses[i];
+//                traj(2) = yaw_opp_car_poses[i];
+//
+//                input(0) = opp_vel;
+//                input(1) = steer_opp_car_poses[i];
+//
+//                ref_trajectory.push_back(traj);
+//                ref_input.push_back(input);
+//                
+//            }
+//            ROS_INFO("Exited reference loading!");
+
+            // Dubins path
+            double start[] = {ego_car_.x, ego_car_.y, ego_car_.theta};
+            double goal[] = {best_waypoint.x, best_waypoint.y, best_waypoint.heading};
+
+            double turning_radius = 1.5;
+
+            DubinsPath path;
+            double x = 0.0;
+
             std::vector<Eigen::VectorXd> ref_trajectory;
             std::vector<Eigen::VectorXd> ref_input;
 
-            for(int i = 0; i < x_opp_car_poses.size(); i++)
+            dubins_init(start, goal, turning_radius, &path);
+            double path_length = dubins_path_length(&path);
+
+            int i = 0;
+
+            while (x < path_length)
             {
+                double q[3];
+                dubins_path_sample(&path, x, q);
+
                 Eigen::VectorXd traj(nx_);
                 Eigen::VectorXd input(nu_);
 
-                traj(0) = x_opp_car_poses[i];
-                traj(1) = y_opp_car_poses[i];
-                traj(2) = yaw_opp_car_poses[i];
+                traj(0) = q[0];
+                traj(1) = q[1];
+                traj(2) = q[2];
 
-                input(0) = opp_vel;
-                input(1) = steer_opp_car_poses[i];
+                input(1) = 0.02*i;
+                input(0) = 3.5;
 
                 ref_trajectory.push_back(traj);
                 ref_input.push_back(input);
-                
+
+                x += step_size_;
+                i++;
             }
-            ROS_INFO("Exited reference loading!");
 
             initMPC(ref_trajectory, ref_input, opp_vel);
 
@@ -1219,6 +1264,7 @@ class PurePursuit
         size_t last_waypt_idx_;
         std::string filename_;
         std::string delimiter_;
+        double step_size_;
 
         std::vector<Waypoint> global_path_;
         
