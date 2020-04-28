@@ -1,0 +1,14 @@
+lookahead_d_: 2.5
+bubble_radius_: 0.40
+gap_threshold_: 3.0
+max_scan_: 5.0
+N_: 10
+Ts_: 0.05
+max_speed_: 12.0
+max_steer_: 0.413
+C_l_: 0.35
+q_x_: 10.0
+q_y_: 10.0
+q_yaw_: 1.0
+r_v_: 2.0
+r_steer_: 0.01

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<launch>
+	<rosparam command="load" file="$(find pure_pursuit)/pp_params.yaml" />
+	<!-- <include file="$(find f1tenth_gym_ros)/launch/gym_bridge_host.launch"/> -->
+	<!-- <node pkg="pure_pursuit" type="odom_listener.py" name="odom_listener_node" /> -->
+	<node pkg="pure_pursuit" type="pure_pursuit_akhilesh" name="pure_pursuit_akhilesh" />
+</launch>
+
+
