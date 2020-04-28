@@ -62,6 +62,8 @@ class Planner
         ros::Publisher waypoint_viz_pub_;
         ros::Publisher pub_pred_markers_;
         ros::Publisher mpc_viz_pub_;
+        ros::Publisher dubins_viz_pub_;
+        ros::Publisher constraints_viz_pub_;
 
         // Other variables
         double lookahead_d_;
@@ -80,12 +82,14 @@ class Planner
         std::string ego_odom_topic_;
         std::string opp_odom_topic_;
         std::string map_topic_;
-        std::string mpc_topic_;
         
         // Publisher topics
         std::string drive_topic_;
         std::string waypoint_topic_;
         std::string costmap_topic_;
+        std::string dubins_topic_;
+        std::string mpc_topic_;
+        std::string constraints_topic_;
 
         // TF frames
         std::string map_frame_;
@@ -140,6 +144,8 @@ class Planner
         // const int nx_ = 3;
         // const int nu_ = 2;
         double max_speed_, max_steer_, C_l_, q_x_, q_y_, q_yaw_, r_v_, r_steer_, Ts_;
+        double xp1_, yp1_;
+        double xp2_, yp2_;
 
         Eigen::Matrix<double, nx_, nx_> Q_;
         Eigen::Matrix<double, nu_, nu_> R_;
@@ -169,12 +175,14 @@ class Planner
             nh_.getParam("/ego_odom", ego_odom_topic_);
             nh_.getParam("/opp_odom", opp_odom_topic_);
             nh_.getParam("/map", map_topic_);
-            nh_.getParam("/mpc", mpc_topic_);
 
             // Publisher topics
             nh_.getParam("/drive_topic", drive_topic_);
             nh_.getParam("/waypoints", waypoint_topic_);
             nh_.getParam("/costmap", costmap_topic_);
+            nh_.getParam("/dubins", dubins_topic_);
+            nh_.getParam("/mpc", mpc_topic_);
+            nh_.getParam("/constraints", constraints_topic_);
 
             // TF Frames
             nh_.getParam("/map_frame", map_frame_);
@@ -234,6 +242,8 @@ class Planner
             map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>(costmap_topic_, 1);
             pub_pred_markers_ = nh_.advertise<visualization_msgs::MarkerArray>("/predicted_path", 100);
             mpc_viz_pub_ = nh_.advertise<visualization_msgs::MarkerArray>(mpc_topic_,10);
+            dubins_viz_pub_ = nh_.advertise<visualization_msgs::MarkerArray>(dubins_topic_, 10);
+            constraints_viz_pub_ = nh_.advertise<visualization_msgs::MarkerArray>(constraints_topic_, 10);
 
             scan_sub_ = nh_.subscribe(scan_topic_, 1, &Planner::scanCallback, this);
             opp_odom_sub_ = nh_.subscribe(opp_odom_topic_, 1, &Planner::oppOdomCallback, this);
@@ -267,7 +277,7 @@ class Planner
 
         void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
         {
-            mpc_constraints_.clear();;
+            // mpc_constraints_.clear();;
 
             updateStaticMap(scan_msg);
 
@@ -337,12 +347,12 @@ class Planner
             ego_car_.theta = yaw;
             current_ego_vel_ = odom_msg->twist.twist.linear.x;
 
-            std::vector<double> ego_state;
-            ego_state.push_back(ego_car_.x);
-            ego_state.push_back(ego_car_.y);
+            // std::vector<double> ego_state;
+            // ego_state.push_back(ego_car_.x);
+            // ego_state.push_back(ego_car_.y);
 
-            mpc_constraints_.push_back(ego_state);
-            mpc_constraints_.push_back(ego_state);
+            // mpc_constraints_.push_back(ego_state);
+            // mpc_constraints_.push_back(ego_state);
 
             std::vector<Waypoint> waypoint_options;
 
@@ -351,17 +361,12 @@ class Planner
             optimal = findOptimalWaypoint();
             waypoint_options.push_back(optimal[0]);
             
-            std::cout << "Number of options: " << waypoint_options.size() << "\n";
+//            std::cout << "Number of options: " << waypoint_options.size() << "\n";
 
             auto best_waypoint = checkFeasibility(waypoint_options);
 
-            std::cout << best_waypoint.x << "\n";
-            std::cout << best_waypoint.y << "\n";
-
-            // if (std::abs(best_waypoint.x)>0.01 || std::abs(best_waypoint.y)>0.01)
-            // {
-            
-            // }
+//            std::cout << best_waypoint.x << "\n";
+//            std::cout << best_waypoint.y << "\n";
 
             add_waypoint_viz(best_waypoint, map_frame_,0.0,1.0,0.0,1.0,0.2,0.2,0.2);
 
@@ -403,17 +408,19 @@ class Planner
                 i++;
             }
 
-//            publishPPSpeed(best_waypoint);
-            if (ref_trajectory.size() > N_)
-            {
-                initMPC(ref_trajectory, ref_input);
-                // publishPPSpeed(best_waypoint);
-            }
-            else
-            {
-                publishPPSpeed(best_waypoint);
-            }
-            // }
+            visualizeDubins(ref_trajectory);
+            visualizeConstraints();
+
+            publishPPSpeed(best_waypoint);
+//            if (ref_trajectory.size() > N_)
+//            {
+//                initMPC(ref_trajectory, ref_input);
+//                // publishPPSpeed(best_waypoint);
+//            }
+//            else
+//            {
+//                publishPPSpeed(best_waypoint);
+//            }
         }
 
         //This method predicts the path of the opponent car and updates the path as obstacles in the map
@@ -768,40 +775,20 @@ class Planner
                     current_size = 0;
                     std::vector<double> gap;
                     std::vector<size_t> gap_dist;
-                    std::vector<double> start_gap_constraint;
-                    std::vector<double> end_gap_constraint;
+                    // std::vector<double> start_gap_constraint;
+                    // std::vector<double> end_gap_constraint;
+
+                    const double start_angle = start_idx_theta + angle_increment_*max_start_idx;
+                    const double end_angle = start_idx_theta + angle_increment_*(max_start_idx+max_size_-1);
             
                     gap_dist.push_back(scan_ranges[max_start_idx]);
                     gap_dist.push_back(scan_ranges[max_start_idx+max_size_-1]);
 
-                    const double start_angle = start_idx_theta + angle_increment_*max_start_idx;
-                    const double end_angle = start_idx_theta + angle_increment_*(max_start_idx+max_size_-1);
-
-                    const double start_x_base = scan_ranges[max_start_idx] * cos(start_angle);
-                    const double start_y_base = scan_ranges[max_start_idx] * sin(start_angle);
-
-                    const double end_x_base = scan_ranges[max_start_idx+max_size_-1] * cos(end_angle);
-                    const double end_y_base = scan_ranges[max_start_idx+max_size_-1] * sin(end_angle);
-
-                    const double start_x_map = start_x_base*cos(yaw) - start_y_base*sin(yaw) + translation.x;
-                    const double start_y_map = start_x_base*sin(yaw) + start_y_base*cos(yaw) + translation.y;
-
-                    const double end_x_map = end_x_base*cos(yaw) - end_y_base*sin(yaw) + translation.x;
-                    const double end_y_map = end_x_base*sin(yaw) + end_y_base*cos(yaw) + translation.y;
-
                     gap.push_back(start_angle);
                     gap.push_back(end_angle);
-            
-                    start_gap_constraint.push_back(start_x_map);
-                    start_gap_constraint.push_back(start_y_map);
-                    
-                    end_gap_constraint.push_back(end_x_map);
-                    end_gap_constraint.push_back(end_y_map);
 
                     best_gaps_.push_back(gap);
                     best_gap_dist_.push_back(gap_dist);
-                    mpc_constraints_.push_back(start_gap_constraint);
-                    mpc_constraints_.push_back(end_gap_constraint);
                 }
                 current_idx++;
             }
@@ -822,32 +809,47 @@ class Planner
                 const double start_angle = start_idx_theta + angle_increment_*max_start_idx;
                 const double end_angle = start_idx_theta + angle_increment_*(max_start_idx+max_size_-1);
 
-                const double start_x_base = scan_ranges[max_start_idx] * cos(start_angle);
-                const double start_y_base = scan_ranges[max_start_idx] * sin(start_angle);
-
-                const double end_x_base = scan_ranges[max_start_idx+max_size_-1] * cos(end_angle);
-                const double end_y_base = scan_ranges[max_start_idx+max_size_-1] * sin(end_angle);
-
-                const double start_x_map = start_x_base*cos(yaw) - start_y_base*sin(yaw) + translation.x;
-                const double start_y_map = start_x_base*sin(yaw) + start_y_base*cos(yaw) + translation.y;
-
-                const double end_x_map = end_x_base*cos(yaw) - end_y_base*sin(yaw) + translation.x;
-                const double end_y_map = end_x_base*sin(yaw) + end_y_base*cos(yaw) + translation.y;
-
                 gap.push_back(start_angle);
                 gap.push_back(end_angle);
 
-                start_gap_constraint.push_back(start_x_map);
-                start_gap_constraint.push_back(start_y_map);
-
-                end_gap_constraint.push_back(end_x_map);
-                end_gap_constraint.push_back(end_y_map);
-
                 best_gaps_.push_back(gap);
                 best_gap_dist_.push_back(gap_dist);
-                mpc_constraints_.push_back(start_gap_constraint);
-                mpc_constraints_.push_back(end_gap_constraint);
             }
+            
+            std::vector<double> start_gap_constraint;
+            std::vector<double> end_gap_constraint;
+
+            const double start_angle = start_idx_theta + angle_increment_*max_start_idx;
+            const double end_angle = start_idx_theta + angle_increment_*(max_start_idx+max_size_-1);
+
+            const double start_x_base = scan_ranges[max_start_idx] * cos(start_angle);
+            const double start_y_base = scan_ranges[max_start_idx] * sin(start_angle);
+
+            const double end_x_base = scan_ranges[max_start_idx+max_size_-1] * cos(end_angle);
+            const double end_y_base = scan_ranges[max_start_idx+max_size_-1] * sin(end_angle);
+
+//            const double start_x_map = start_x_base*cos(yaw) - start_y_base*sin(yaw) + translation.x;
+//            const double start_y_map = start_x_base*sin(yaw) + start_y_base*cos(yaw) + translation.y;
+//
+//            const double end_x_map = end_x_base*cos(yaw) - end_y_base*sin(yaw) + translation.x;
+//            const double end_y_map = end_x_base*sin(yaw) + end_y_base*cos(yaw) + translation.y;
+//            start_gap_constraint.push_back(start_x_map);
+//            start_gap_constraint.push_back(start_y_map);
+//
+//            end_gap_constraint.push_back(end_x_map);
+//            end_gap_constraint.push_back(end_y_map);
+//
+//            mpc_constraints_.push_back(start_gap_constraint);
+//            mpc_constraints_.push_back(end_gap_constraint);
+
+            xp1_ = start_x_base*cos(yaw) - start_y_base*sin(yaw) + translation.x;
+            yp1_ = start_x_base*sin(yaw) + start_y_base*cos(yaw) + translation.y;
+
+            xp2_ = end_x_base*cos(yaw) - end_y_base*sin(yaw) + translation.x;
+            yp2_ = end_x_base*sin(yaw) + end_y_base*cos(yaw) + translation.y;
+
+
+//            ROS_INFO("Constraints size: %d", mpc_constraints_.size());
         }
 
         std::vector<Waypoint> findOptimalWaypoint()
@@ -1014,7 +1016,7 @@ class Planner
                 {
                     best_waypoint = waypoint_options[path_num_];
                     best_gaps_.clear();
-                    ROS_INFO("Choosing the optimal waypoint");
+//                    ROS_INFO("Choosing the optimal waypoint");
                     return best_waypoint;
                 }
             }
@@ -1253,7 +1255,7 @@ class Planner
             }
             else
             {
-                ROS_INFO("In low speed mode");
+//                ROS_INFO("In low speed mode");
                 HIGH_SPEED = 3.0;
                 MID_SPEED = 2.0;
                 LOW_SPEED = 1.0;
@@ -1413,7 +1415,7 @@ class Planner
 
             Eigen::VectorXd QPSolution = solver.getSolution();
 
-            visualizeMPC(QPSolution, ref_trajectory);
+            visualizeMPC(QPSolution);
 
             executeMPC(QPSolution);
 
@@ -1456,28 +1458,28 @@ class Planner
 
         void halfSpaceConstraints(double& A11, double& A12, double& A21, double& A22, double& B11, double& B12)
         {
-            double xc1, xc2, xp1, xp2;
-            double yc1, yc2, yp1, yp2;
+//            double xc1, xc2, xp1, xp2;
+//            double yc1, yc2, yp1, yp2;
+//
+//            xc1 = mpc_constraints_[2][0];
+//            yc1 = mpc_constraints_[2][1];
+//
+//            xc2 = mpc_constraints_[3][0];
+//            yc2 = mpc_constraints_[3][1];
+//
+//            xp1 = mpc_constraints_[0][0];
+//            yp1 = mpc_constraints_[0][1];
+//
+//            xp2 = mpc_constraints_[1][0];
+//            yp2 = mpc_constraints_[1][1];
 
-            xc1 = mpc_constraints_[mpc_constraints_.size()-2][0];
-            yc1 = mpc_constraints_[mpc_constraints_.size()-2][1];
+            A11 = yp1_ - ego_car_.y;
+            A12 = ego_car_.x - xp1_;
+            A21 = ego_car_.y - yp2_;
+            A22 = xp2_ - ego_car_.x;
 
-            xc2 = mpc_constraints_[mpc_constraints_.size()-1][0];
-            yc2 = mpc_constraints_[mpc_constraints_.size()-1][1];
-
-            xp1 = mpc_constraints_[mpc_constraints_.size()-4][0];
-            yp1 = mpc_constraints_[mpc_constraints_.size()-4][1];
-
-            xp2 = mpc_constraints_[mpc_constraints_.size()-3][0];
-            yp2 = mpc_constraints_[mpc_constraints_.size()-3][1];
-
-            A11 = yp1-yc1;
-            A12 = xc1-xp1;
-            A21 = yc2-yp2;
-            A22 = xp2-xc2;
-
-            B11 = -1*(yc1*xp1 - yp1*xc1);
-            B12 = -1*(yp2*xc2 - yc2*xp2);
+            B11 = -1*(ego_car_.y*xp1_ - yp1_*ego_car_.x);
+            B12 = -1*(yp2_*ego_car_.x - ego_car_.y*xp2_);
         }
 
         void executeMPC(Eigen::VectorXd& QPSolution)
@@ -1498,7 +1500,7 @@ class Planner
             drive_pub_.publish(drive_msg);
         }
 
-        void visualizeMPC(Eigen::VectorXd& QPSolution, std::vector<Eigen::VectorXd>& ref_traj)
+        void visualizeDubins(std::vector<Eigen::VectorXd>& ref_traj)
         {
             visualization_msgs::Marker traj_ref;
             geometry_msgs::Point p;
@@ -1523,6 +1525,67 @@ class Planner
                 traj_ref.points.push_back(p);
             }
 
+            visualization_msgs::MarkerArray dubins_markers;
+            // mpc_markers.markers.push_back(pred_dots);
+            // mpc_markers.markers.push_back(borderlines);
+            dubins_markers.markers.push_back(traj_ref);
+
+            dubins_viz_pub_.publish(dubins_markers);
+        }
+
+        void visualizeConstraints()
+        {
+
+            visualization_msgs::Marker borderlines;
+            borderlines.header.frame_id = "map";
+            borderlines.id = rviz_id::BORDERLINES;
+            borderlines.ns = "borderlines";
+            borderlines.type = visualization_msgs::Marker::LINE_STRIP;
+            borderlines.scale.x = 0.08;
+            borderlines.scale.y = 0.08;
+            borderlines.action = visualization_msgs::Marker::ADD;
+            borderlines.pose.orientation.w = 1.0;
+            borderlines.color.r = 1.0;
+            borderlines.color.a = 1.0;
+
+//            for (int i=0; i<mpc_constraints_.size(); i++)
+//            {
+//                geometry_msgs::Point border_point;
+//                border_point.x = mpc_constraints_[i][0];
+//                border_point.y = mpc_constraints_[i][1];
+//
+//                borderlines.points.push_back(border_point);
+//            }
+
+            geometry_msgs::Point c1;
+            c1.x = ego_car_.x;
+            c1.y = ego_car_.y;
+
+            geometry_msgs::Point c2;
+            c2.x = ego_car_.x;
+            c2.y = ego_car_.y;
+
+            geometry_msgs::Point p1;
+            p1.x = xp1_;
+            p1.y = yp1_;
+
+            geometry_msgs::Point p2;
+            p2.x = xp2_;
+            p2.y = yp2_;
+
+            borderlines.points.push_back(c1);
+            borderlines.points.push_back(c2);
+            borderlines.points.push_back(p1);
+            borderlines.points.push_back(p2);
+
+            visualization_msgs::MarkerArray constraints;
+            constraints.markers.push_back(borderlines);
+
+            constraints_viz_pub_.publish(constraints);
+        }
+
+        void visualizeMPC(Eigen::VectorXd& QPSolution)
+        {
             visualization_msgs::Marker pred_dots;
             pred_dots.header.frame_id = "map";
             pred_dots.id = rviz_id::PREDICTION;
@@ -1544,33 +1607,11 @@ class Planner
                 pred_dots.points.push_back(p);
             }
 
-            visualization_msgs::Marker borderlines;
-            borderlines.header.frame_id = "map";
-            borderlines.id = rviz_id::BORDERLINES;
-            borderlines.ns = "borderlines";
-            borderlines.type = visualization_msgs::Marker::LINE_STRIP;
-            borderlines.scale.x = 0.08;
-            borderlines.scale.y = 0.08;
-            borderlines.action = visualization_msgs::Marker::ADD;
-            borderlines.pose.orientation.w = 1.0;
-            borderlines.color.r = 1.0;
-            borderlines.color.a = 1.0;
-
-            for (int i=0; i<mpc_constraints_.size(); i++)
-            {
-                geometry_msgs::Point border_point;
-                border_point.x = mpc_constraints_[i][0];
-                border_point.y = mpc_constraints_[i][1];
-
-                borderlines.points.push_back(border_point);
-            }
-
             visualization_msgs::MarkerArray mpc_markers;
-            // mpc_markers.markers.push_back(pred_dots);
-            // mpc_markers.markers.push_back(borderlines);
-            mpc_markers.markers.push_back(traj_ref);
+            mpc_markers.markers.push_back(pred_dots);
 
             mpc_viz_pub_.publish(mpc_markers);
+
         }
 
 };

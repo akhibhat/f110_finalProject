@@ -1,19 +1,19 @@
 # Config file for planner
 
 # Constants for tuning
-lookahead_distance: 2.0
+lookahead_distance: 2.2
 
 bubble_radius: 0.40
 
-gap_threshold: 5.0
+gap_threshold: 2.0
 gap_size_threshold: 30
 
 inflation_radius: 3
-gap_bubble: 2.0
+gap_bubble: 5.0
 
 max_scan: 7.0
 
-folder_path: "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject"
+folder_path: "/home/akhilesh/f110_ws/src/final_project"
 delimiter: ","
 
 collision_points: 50
@@ -33,6 +33,8 @@ waypoints: "/waypoint_markers"
 costmap: "/costmap"
 endpoints: "/waypoint"
 mpc: "/mpc"
+dubins: "/dubins"
+constraints: "/constraints"
 
 # TF Frames
 map_frame: "map"
