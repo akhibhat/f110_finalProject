@@ -961,7 +961,8 @@ class Planner
         }
 
         Waypoint checkFeasibility(std::vector<Waypoint> waypoint_options)
-        {
+        {	
+        	bool change = false;
             try
             {
                 tf_map_to_laser_ = tf_buffer_.lookupTransform(ego_laser_frame_, map_frame_, ros::Time(0));
@@ -1012,14 +1013,16 @@ class Planner
 
             if (dist > gap_bubble_)
             {
-                if (abs(opt_steering)<0.35)
+                if (abs(opt_steering)<0.413)
                 {
                     best_waypoint = waypoint_options[path_num_];
                     best_gaps_.clear();
-//                    ROS_INFO("Choosing the optimal waypoint");
+                    ROS_INFO("Choosing the optimal waypoint");
                     return best_waypoint;
                 }
             }
+
+            // ROS_INFO("Pass the if, dist: %f, translation: %f", dist, translation.x);
 
             double best_waypoint_cost = std::numeric_limits<double>::max();
 
@@ -1047,11 +1050,16 @@ class Planner
                     //TODO Check for obstacles as well
 
                 if (cost < best_waypoint_cost)
-                {
+                {	
+                	change = true;
                     best_waypoint_cost = cost;
                     best_waypoint = waypoint_options[i];
                 }
                 //}
+            }
+            if (change != true)
+            {
+            	ROS_INFO("NO BEST WAYPOINT");
             }
             best_gaps_.clear();
             return best_waypoint;

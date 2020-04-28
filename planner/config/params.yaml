@@ -13,7 +13,7 @@ gap_bubble: 5.0
 
 max_scan: 7.0
 
-folder_path: "/home/akhilesh/f110_ws/src/final_project"
+folder_path: "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject"
 delimiter: ","
 
 collision_points: 50
