@@ -3,6 +3,7 @@
 <launch>
 
     <rosparam command="load" file="$(find planner)/config/params.yaml" />
+    <rosparam command="load" file="$(find planner)/config/mpc_params.yaml" />
 
     <include file="$(find f1tenth_gym_ros)/launch/gym_bridge_host.launch"/>
 

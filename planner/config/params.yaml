@@ -11,7 +11,7 @@ gap_size_threshold: 30
 inflation_radius: 3
 gap_bubble: 2.0
 
-max_scan: 5.0
+max_scan: 7.0
 
 folder_path: "/home/akhilesh/f110_ws/src/final_project"
 delimiter: ","
@@ -32,6 +32,7 @@ drive_topic: "/drive"
 waypoints: "/waypoint_markers"
 costmap: "/costmap"
 endpoints: "/waypoint"
+mpc: "/mpc"
 
 # TF Frames
 map_frame: "map"
