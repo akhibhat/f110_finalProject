@@ -411,16 +411,16 @@ class Planner
             visualizeDubins(ref_trajectory);
             visualizeConstraints();
 
-            publishPPSpeed(best_waypoint);
-//            if (ref_trajectory.size() > N_)
-//            {
-//                initMPC(ref_trajectory, ref_input);
-//                // publishPPSpeed(best_waypoint);
-//            }
-//            else
-//            {
-//                publishPPSpeed(best_waypoint);
-//            }
+//            publishPPSpeed(best_waypoint);
+            if (ref_trajectory.size() > N_)
+            {
+                initMPC(ref_trajectory, ref_input);
+                // publishPPSpeed(best_waypoint);
+            }
+            else
+            {
+                publishPPSpeed(best_waypoint);
+            }
         }
 
         //This method predicts the path of the opponent car and updates the path as obstacles in the map
