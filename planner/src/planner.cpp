@@ -197,7 +197,7 @@ class Planner
 
             truncate_ = false;
             
-            optimal_waypoint_file_ = folder_path_ + "/waypoints_data/best_skirk_nei.csv";
+            optimal_waypoint_file_ = folder_path_ + "/waypoints_data/wp_with_yaw.csv";
             path_num_ = 4;
 
             clear_obstacles_count_ = 0;
@@ -267,6 +267,8 @@ class Planner
 
         void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
         {
+            mpc_constraints_.clear();;
+
             updateStaticMap(scan_msg);
 
             if (!truncate_)
@@ -280,6 +282,10 @@ class Planner
 
                 angle_increment_ = scan_msg->angle_increment;
             }
+
+            double start_idx_theta_ = scan_msg->angle_min + start_idx_*angle_increment_;
+            double end_idx_theta_ = scan_msg->angle_min + end_idx_*angle_increment_;
+            
 
             ROS_DEBUG("Got truncated start and end indices!");
 
@@ -311,7 +317,7 @@ class Planner
 
             ROS_DEBUG("Eliminated safety bubble!");
 
-            findbestGap(filtered_ranges);
+            findbestGap(filtered_ranges, start_idx_theta_, end_idx_theta_);
         }
 
         void egoOdomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg)
@@ -344,15 +350,25 @@ class Planner
             std::vector<Waypoint> optimal;
             optimal = findOptimalWaypoint();
             waypoint_options.push_back(optimal[0]);
+            
+            std::cout << "Number of options: " << waypoint_options.size() << "\n";
 
             auto best_waypoint = checkFeasibility(waypoint_options);
+
+            std::cout << best_waypoint.x << "\n";
+            std::cout << best_waypoint.y << "\n";
+
+            // if (std::abs(best_waypoint.x)>0.01 || std::abs(best_waypoint.y)>0.01)
+            // {
+            
+            // }
 
             add_waypoint_viz(best_waypoint, map_frame_,0.0,1.0,0.0,1.0,0.2,0.2,0.2);
 
             double start[] = { ego_car_.x, ego_car_.y, ego_car_.theta };
             double goal[] = {best_waypoint.x, best_waypoint.y, best_waypoint.heading};
 
-            double turning_radius = current_ego_vel_/max_angular_vel_; //TODO
+            double turning_radius = 1.0; //TODO
 
             DubinsPath path;
             double x = 0.0;
@@ -362,6 +378,8 @@ class Planner
 
             dubins_init(start, goal, turning_radius, &path);
             double path_length = dubins_path_length(&path);
+
+            int i = 0;
 
             while (x < path_length)
             {
@@ -375,13 +393,14 @@ class Planner
                 traj(1) = q[1];
                 traj(2) = q[2];
                 
-                input(1) = 0.0;
-                input(0) = current_ego_vel_;
+                input(1) = 0.02*i;
+                input(0) = 2.0;
 
                 ref_trajectory.push_back(traj);
                 ref_input.push_back(input);
 
                 x += step_size_;
+                i++;
             }
 
 //            publishPPSpeed(best_waypoint);
@@ -394,6 +413,7 @@ class Planner
             {
                 publishPPSpeed(best_waypoint);
             }
+            // }
         }
 
         //This method predicts the path of the opponent car and updates the path as obstacles in the map
@@ -698,7 +718,7 @@ class Planner
             }
         }
 
-        void findbestGap(const std::vector<double>& scan_ranges)
+        void findbestGap(const std::vector<double>& scan_ranges, double& start_idx_theta, double& end_idx_theta)
         {
             size_t max_start_idx = 0;
             size_t max_size_ = 0;
@@ -734,7 +754,7 @@ class Planner
                 current_start = current_idx;
                 current_size = 0;
 
-                while ((current_idx < scan_ranges.size())  && (scan_ranges[current_idx] > 0.0))
+                while ((current_idx < scan_ranges.size())  && (scan_ranges[current_idx] > gap_threshold_))
                 {
                     current_size++;
                     current_idx++;
@@ -744,6 +764,7 @@ class Planner
                 {
                     max_start_idx = current_start;
                     max_size_ = current_size;
+
                     current_size = 0;
                     std::vector<double> gap;
                     std::vector<size_t> gap_dist;
@@ -753,8 +774,8 @@ class Planner
                     gap_dist.push_back(scan_ranges[max_start_idx]);
                     gap_dist.push_back(scan_ranges[max_start_idx+max_size_-1]);
 
-                    const double start_angle = angle_increment_*(max_start_idx-scan_ranges.size()/2);
-                    const double end_angle = angle_increment_*(max_start_idx+max_size_-1-scan_ranges.size()/2);
+                    const double start_angle = start_idx_theta + angle_increment_*max_start_idx;
+                    const double end_angle = start_idx_theta + angle_increment_*(max_start_idx+max_size_-1);
 
                     const double start_x_base = scan_ranges[max_start_idx] * cos(start_angle);
                     const double start_y_base = scan_ranges[max_start_idx] * sin(start_angle);
@@ -787,7 +808,6 @@ class Planner
 
             if (current_size > max_size_)
             {
-                ROS_INFO("Inside if loop");
                 max_start_idx = current_start;
                 max_size_ = current_size;
 
@@ -799,8 +819,8 @@ class Planner
                 gap_dist.push_back(scan_ranges[max_start_idx]);
                 gap_dist.push_back(scan_ranges[max_start_idx+max_size_-1]);
         
-                const double start_angle = angle_increment_*(max_start_idx-scan_ranges.size()/2);
-                const double end_angle = angle_increment_*(max_start_idx+max_size_-1-scan_ranges.size()/2);
+                const double start_angle = start_idx_theta + angle_increment_*max_start_idx;
+                const double end_angle = start_idx_theta + angle_increment_*(max_start_idx+max_size_-1);
 
                 const double start_x_base = scan_ranges[max_start_idx] * cos(start_angle);
                 const double start_y_base = scan_ranges[max_start_idx] * sin(start_angle);
@@ -965,7 +985,7 @@ class Planner
 
             // double opt_steering = atan2(opt_waypoint.position.x, opt_waypoint.position.y);
             double opt_steering = (0.8*2*opt_waypoint.position.y)/(pow(lookahead_d_, 2));
-            
+
             try
             {
                 tf_opp_to_ego_ = tf_buffer_.lookupTransform(ego_base_frame_, opp_base_frame_, ros::Time(0));
@@ -988,7 +1008,7 @@ class Planner
                 too_close_ = false;
             }
 
-            if (checkGap(opt_steering) && dist > gap_bubble_)
+            if (dist > gap_bubble_)
             {
                 if (abs(opt_steering)<0.35)
                 {
@@ -1016,24 +1036,22 @@ class Planner
 
                 double steering_angle = atan2(goal_waypoint.position.x, goal_waypoint.position.y);
 
-                if (checkGap(steering_angle))
-                {
+                //if (checkGap(steering_angle))
+                //{
                     // Send in either states or just waypoints
                     // double cost = dubinsCost(ego_car_, goal_waypoint);
 
-                    double cost = waypointCost(goal_waypoint);
+                double cost = waypointCost(goal_waypoint);
                     //TODO Check for obstacles as well
 
-                    if (cost < best_waypoint_cost)
-                    {
-                        best_waypoint_cost = cost;
-                        best_waypoint = waypoint_options[i];
-                    }
+                if (cost < best_waypoint_cost)
+                {
+                    best_waypoint_cost = cost;
+                    best_waypoint = waypoint_options[i];
                 }
+                //}
             }
-
             best_gaps_.clear();
-            
             return best_waypoint;
         }
 
@@ -1085,7 +1103,7 @@ class Planner
                 Waypoint waypoint{};
                 waypoint.x = std::stod(vec[0]);
                 waypoint.y = std::stod(vec[1]);
-                // waypoint.heading = std::stod(vec[2]);
+                waypoint.heading = std::stod(vec[2]);
                 waypoint.speed = 0.0;
 
                 trajectory.push_back(waypoint);
@@ -1113,7 +1131,7 @@ class Planner
                 Waypoint waypoint{};
                 waypoint.x = std::stod(vec[0]);
                 waypoint.y = std::stod(vec[1]);
-                // waypoint.heading = std::stod(vec[2]);
+                waypoint.heading = 0.0;
                 waypoint.speed = 0.0;
 
                 trajectory.push_back(waypoint);
@@ -1366,8 +1384,8 @@ class Planner
             // fill initial condition in lb and ub
             lb.head(nx_) = -ref_trajectory[0];
             ub.head(nx_) = -ref_trajectory[0];
-            lb((N_+1)*nx_ + 2*(N_+1)) = current_ego_vel_;
-            ub((N_+1)*nx_ + 2*(N_+1)) = current_ego_vel_;
+            lb((N_+1)*nx_ + 2*(N_+1)) = 2.5;
+            ub((N_+1)*nx_ + 2*(N_+1)) = 2.5;
 
             Eigen::SparseMatrix<double> H_matrix_T = H_matrix.transpose();
             Eigen::SparseMatrix<double> sparse_I((N_+1)*(nx_+nu_), (N_+1)*(nx_+nu_));
@@ -1397,9 +1415,9 @@ class Planner
 
             visualizeMPC(QPSolution, ref_trajectory);
 
-//            executeMPC(QPSolution);
-//
-//            solver.clearSolver();
+            executeMPC(QPSolution);
+
+            solver.clearSolver();
         }
 
         void getCarDynamics(Eigen::Matrix<double,nx_,nx_>& Ad, Eigen::Matrix<double,nx_,nu_>& Bd, Eigen::Matrix<double,nx_,1>& hd, Eigen::Matrix<double,nx_,1>& state, Eigen::Matrix<double,nu_,1>& input)
@@ -1441,25 +1459,25 @@ class Planner
             double xc1, xc2, xp1, xp2;
             double yc1, yc2, yp1, yp2;
 
-            xc1 = mpc_constraints_[2][0];
-            yc1 = mpc_constraints_[2][1];
+            xc1 = mpc_constraints_[mpc_constraints_.size()-2][0];
+            yc1 = mpc_constraints_[mpc_constraints_.size()-2][1];
 
-            xc2 = mpc_constraints_[3][0];
-            yc2 = mpc_constraints_[3][1];
+            xc2 = mpc_constraints_[mpc_constraints_.size()-1][0];
+            yc2 = mpc_constraints_[mpc_constraints_.size()-1][1];
 
-            xp1 = mpc_constraints_[0][0];
-            yp1 = mpc_constraints_[0][1];
+            xp1 = mpc_constraints_[mpc_constraints_.size()-4][0];
+            yp1 = mpc_constraints_[mpc_constraints_.size()-4][1];
 
-            xp2 = mpc_constraints_[1][0];
-            yp2 = mpc_constraints_[1][1];
+            xp2 = mpc_constraints_[mpc_constraints_.size()-3][0];
+            yp2 = mpc_constraints_[mpc_constraints_.size()-3][1];
 
-            A11 = yc1-yp1;
-            A12 = xp1-xc1;
-            A21 = yp2-yc2;
-            A22 = xc2-xp2;
+            A11 = yp1-yc1;
+            A12 = xc1-xp1;
+            A21 = yc2-yp2;
+            A22 = xp2-xc2;
 
-            B11 = yc1*xp1 - yp1*xc1;
-            B12 = yp2*xc2 - yc2*xp2;
+            B11 = -1*(yc1*xp1 - yp1*xc1);
+            B12 = -1*(yp2*xc2 - yc2*xp2);
         }
 
         void executeMPC(Eigen::VectorXd& QPSolution)
@@ -1497,7 +1515,7 @@ class Planner
             traj_ref.color.g = 1.0;
             traj_ref.color.a = 1.0;
 
-            for (int i=0; i<ref_traj.size(); i++)
+            for (int i=0; i<N_; i++)
             {
                 p.x = ref_traj[i](0);
                 p.y = ref_traj[i](1);
@@ -1549,8 +1567,8 @@ class Planner
 
             visualization_msgs::MarkerArray mpc_markers;
             // mpc_markers.markers.push_back(pred_dots);
-            mpc_markers.markers.push_back(borderlines);
-            // mpc_markers.markers.push_back(traj_ref);
+            // mpc_markers.markers.push_back(borderlines);
+            mpc_markers.markers.push_back(traj_ref);
 
             mpc_viz_pub_.publish(mpc_markers);
         }
