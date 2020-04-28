@@ -254,10 +254,10 @@ class Planner
             ROS_INFO("Reading waypoint data...");
             global_path_ = getOptimalTrack();
 
-            std::string file1 = folder_path_ + "/waypoints_data/wp_inner0.5.csv";
-            std::string file2 = folder_path_ + "/waypoints_data/wp_inner0.75.csv";
-            std::string file3 = folder_path_ + "/waypoints_data/wp_outer0.5.csv";
-            std::string file4 = folder_path_ + "/waypoints_data/wp_outer1.0.csv";
+            std::string file1 = folder_path_ + "/waypoints_data/yaw_wp_inner0.5.csv";
+            std::string file2 = folder_path_ + "/waypoints_data/yaw_wp_inner0.75.csv";
+            std::string file3 = folder_path_ + "/waypoints_data/yaw_wp_outer0.5.csv";
+            std::string file4 = folder_path_ + "/waypoints_data/yaw_wp_outer1.0.csv";
 
             trajectory_options_.push_back(getTrack(file1));
             trajectory_options_.push_back(getTrack(file2));
@@ -368,7 +368,7 @@ class Planner
             double start[] = { ego_car_.x, ego_car_.y, ego_car_.theta };
             double goal[] = {best_waypoint.x, best_waypoint.y, best_waypoint.heading};
 
-            double turning_radius = 1.0; //TODO
+            double turning_radius = 1.5; //TODO
 
             DubinsPath path;
             double x = 0.0;
@@ -394,7 +394,7 @@ class Planner
                 traj(2) = q[2];
                 
                 input(1) = 0.02*i;
-                input(0) = 2.0;
+                input(0) = 3.5;
 
                 ref_trajectory.push_back(traj);
                 ref_input.push_back(input);
@@ -1129,7 +1129,7 @@ class Planner
                 Waypoint waypoint{};
                 waypoint.x = std::stod(vec[0]);
                 waypoint.y = std::stod(vec[1]);
-                waypoint.heading = 0.0;
+                waypoint.heading = std::stod(vec[2]);
                 waypoint.speed = 0.0;
 
                 trajectory.push_back(waypoint);
@@ -1382,8 +1382,8 @@ class Planner
             // fill initial condition in lb and ub
             lb.head(nx_) = -ref_trajectory[0];
             ub.head(nx_) = -ref_trajectory[0];
-            lb((N_+1)*nx_ + 2*(N_+1)) = 2.5;
-            ub((N_+1)*nx_ + 2*(N_+1)) = 2.5;
+            lb((N_+1)*nx_ + 2*(N_+1)) = 3.5;
+            ub((N_+1)*nx_ + 2*(N_+1)) = 3.5;
 
             Eigen::SparseMatrix<double> H_matrix_T = H_matrix.transpose();
             Eigen::SparseMatrix<double> sparse_I((N_+1)*(nx_+nu_), (N_+1)*(nx_+nu_));
@@ -1513,7 +1513,7 @@ class Planner
             traj_ref.color.g = 1.0;
             traj_ref.color.a = 1.0;
 
-            for (int i=0; i<N_; i++)
+            for (int i=0; i<ref_traj.size(); i++)
             {
                 p.x = ref_traj[i](0);
                 p.y = ref_traj[i](1);
