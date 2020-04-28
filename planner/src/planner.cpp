@@ -637,6 +637,7 @@ class Planner
             double theta = scan_msg->angle_min + start*angle_increment;
 
             for (int i=start; i<end; i++)
+
             {
                 theta += angle_increment;
                 const double hit = scan_msg->ranges[i];
@@ -658,6 +659,7 @@ class Planner
                         new_obstacles_.push_back(obstacleIdx[i]);
                     }
                 }
+
             }
 
             clear_obstacles_count_++;

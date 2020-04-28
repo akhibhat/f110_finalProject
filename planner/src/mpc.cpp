@@ -49,7 +49,7 @@ void MPC::get_MPC_path(vector<Eigen::VectorXd>& ref_trajectory, vector<Eigen::Ve
 {
 	//define the Hessian and Constraint matrix
 	Eigen::SparseMatrix<double> H_matrix((N+1)*(nx+nu), (N+1)*(nx+nu));
-	Eigen::SparseMatrix<double> A_c((N+1)*nx + 2*(N+1) + (N+1)*nu);
+	Eigen::SparseMatrix<double> A_c((N+1)*nx + 2*(N+1) + (N+1)*nu, (N+1)*(nx+nu));
 
 	//define the gradient vector
 	Eigen::VectorXd g((N+1)*(nx+nu));
