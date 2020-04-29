@@ -55,7 +55,7 @@ class PurePursuit
             // lookahead_d_ = 2.5;
             waypt_num_ = 0.0;
             delimiter_ = ",";
-            filename_ = "/home/mihir/mihir_ws/src/f110_ros/pure_pursuit/best_skirk_nei.csv";
+            filename_ = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/wp_with_yaw.csv";
             // filename_ = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/waypoints_data/best_skirk_nei_vel.csv";
 
             // nh_.getParam("/lookahead_distance", lookahead_d_);
@@ -99,6 +99,7 @@ class PurePursuit
             mpc_viz_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/mpc_path",100);
             mpc_markers = nh_.advertise<visualization_msgs::MarkerArray>("/mpc_markers",100);
             mpc_markers2 = nh_.advertise<visualization_msgs::MarkerArray>("/mpc_markers2",100);
+            dubins_viz_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/dubins_path", 100);
             
             scan_sub_ = nh_.subscribe("/scan", 1, &PurePursuit::scanCallback, this);
             pose_sub_ = nh_.subscribe("/gt_pose", 1, &PurePursuit::poseCallback, this);
@@ -165,7 +166,7 @@ class PurePursuit
                 double scale_x=0.1, double scale_y=0.1, double scale_z=0.1)
         {
             visualization_msgs::Marker waypoint_marker;
-            waypoint_marker.header.frame_id = "base_link";
+            waypoint_marker.header.frame_id = frame_id;
             waypoint_marker.header.stamp = ros::Time();
             waypoint_marker.ns = "pure_pursuit";
             waypoint_marker.type = visualization_msgs::Marker::CUBE;
@@ -215,7 +216,7 @@ class PurePursuit
                 Waypoint waypoint{};
                 waypoint.x = std::stod(vec[0]);
                 waypoint.y = std::stod(vec[1]);
-                // waypoint.desired_vel = std::stod(vec[2]);
+                waypoint.heading = std::stod(vec[2]);
                 // waypoint.desired_steering = 
 
                 waypoints.push_back(waypoint);
@@ -407,7 +408,7 @@ class PurePursuit
             ROS_INFO("entering scanCallback");
             if (!truncate_)
             {
-                const size_t truncate_size = static_cast<size_t>((3.14/(scan_msg->angle_max - scan_msg->angle_min))*scan_msg->ranges.size());
+                const size_t truncate_size = static_cast<size_t>((((2*3.14)/3)/(scan_msg->angle_max - scan_msg->angle_min))*scan_msg->ranges.size());
 
                 start_idx_ = (scan_msg->ranges.size()/2) - (truncate_size/2);
                 end_idx_ = (scan_msg->ranges.size()/2) + (truncate_size/2);
@@ -571,37 +572,14 @@ class PurePursuit
                 gap_dist.push_back(scan_ranges[max_start_idx]);
                 gap_dist.push_back(scan_ranges[max_start_idx+max_size_-1]);
 
-                // ROS_INFO("max_start_idx: %d", max_start_idx);
-                // ROS_INFO("max_size_: %d", max_size_);
-        
                 const double start_angle = start_idx_theta_ + angle_increment_*(max_start_idx);
                 const double end_angle = end_idx_theta_ + angle_increment_*(max_start_idx+max_size_-1);
-
-                // const double start_x_base = scan_ranges[max_start_idx] * cos(start_angle);
-                // const double start_y_base = scan_ranges[max_start_idx] * sin(start_angle);
-
-                // const double end_x_base = scan_ranges[max_start_idx+max_size_-1] * cos(end_angle);
-                // const double end_y_base = scan_ranges[max_start_idx+max_size_-1] * sin(end_angle);
-
-                // const double start_x_map = start_x_base*cos(yaw) - start_y_base*sin(yaw) + translation.x;
-                // const double start_y_map = start_x_base*sin(yaw) + start_y_base*cos(yaw) + translation.y;
-
-                // const double end_x_map = end_x_base*cos(yaw) - end_y_base*sin(yaw) + translation.x;
-                // const double end_y_map = end_x_base*sin(yaw) + end_y_base*cos(yaw) + translation.y;
 
                 gap.push_back(start_angle);
                 gap.push_back(end_angle);
 
-                // start_gap_constraint.push_back(start_x_map);
-                // start_gap_constraint.push_back(start_y_map);
-
-                // end_gap_constraint.push_back(end_x_map);
-                // end_gap_constraint.push_back(end_y_map);
-
                 best_gaps_.push_back(gap);
                 best_gap_dist_.push_back(gap_dist);
-                // mpc_constraints_.push_back(start_gap_constraint);
-                // mpc_constraints_.push_back(end_gap_constraint);
             }
 
             std::vector<double> start_gap_constraint;
@@ -666,7 +644,7 @@ class PurePursuit
             double A11, A12, A21, A22, B11, B22;
             halfSpaceConstraints(A11, A12, A21, A22, B11, B22);
 
-            // ROS_INFO("Initialized everything in MPC");
+            ROS_INFO("Initialized everything in MPC");
 
             for (int i=0; i<N_+1; i++)
             {
@@ -756,7 +734,7 @@ class PurePursuit
                 // ROS_INFO("upper and lower bound second part done");
             }
 
-            // ROS_INFO("MATRICES FILLED!");
+            ROS_INFO("MATRICES FILLED!");
 
             // fill initial condition in lb and ub
             lb.head(nx_) = -ref_trajectory[0];
@@ -798,7 +776,7 @@ class PurePursuit
 
             Eigen::VectorXd QPSolution = solver.getSolution();
 
-            visualizeMPC(QPSolution, ref_trajectory);
+            // visualizeMPC(QPSolution, ref_trajectory);
             PublishMPCPath2(QPSolution);
 
             executeMPC(QPSolution);
@@ -824,17 +802,6 @@ class PurePursuit
 
             xp2 = mpc_constraints_[4 - 3][0];
             yp2 = mpc_constraints_[4 - 3][1];
-            // xc1 = -5.0;
-            // yc1 = -3.0;
-
-            // xc2 = -5.0;
-            // yc2 = 3.0;
-
-            // xp1 = 5.0;
-            // yp1 = -3.0;
-
-            // xp2 = 5.0;
-            // yp2 = 3.0;
 
             ROS_INFO("xc1: %f yc1: %f", xc1, yc1);
             ROS_INFO("xc2: %f yc2: %f", xc2, yc2);
@@ -846,16 +813,8 @@ class PurePursuit
             A21 = yc2 - yp2;
             A22 = xp2 - xc2;
 
-            // A11 = 0.0;
-            // A12 = 10.0;
-            // A21 = 0.0;
-            // A22 = -10.0;
-
             B11 = -1*(yc1*xp1 - yp1*xc1);
             B12 = -1*(yp2*xc2 - yc2*xp2);
-
-            // B11 = 30.0;
-            // B12 = 30.0;
 
             ROS_INFO("A11: %f A12: %f", A11, A12);
             ROS_INFO("A21: %f A22: %f", A21, A22);
@@ -916,51 +875,8 @@ class PurePursuit
             ROS_INFO("Path Executed");
         }
 
-        void visualizeMPC(Eigen::VectorXd& QPSolution, std::vector<Eigen::VectorXd>& ref_traj)
+        void visualizeConstraint()
         {
-            visualization_msgs::Marker traj_ref;
-            geometry_msgs::Point p;
-
-            traj_ref.header.stamp = ros::Time::now();
-            traj_ref.header.frame_id = "map";
-            traj_ref.id = rviz_id::TRAJECTORY_REF;
-            traj_ref.ns = "reference_traj";
-            traj_ref.type = visualization_msgs::Marker::LINE_STRIP;
-            traj_ref.scale.x = traj_ref.scale.y = 0.04;
-            traj_ref.scale.z = 0.02;
-            traj_ref.action = visualization_msgs::Marker::ADD;
-            traj_ref.pose.orientation.w = 1.0;
-            traj_ref.color.g = 1.0;
-            traj_ref.color.a = 1.0;
-
-            for (int i=0; i<ref_traj.size(); i++)
-            {
-                p.x = ref_traj[i](0);
-                p.y = ref_traj[i](1);
-
-                traj_ref.points.push_back(p);
-            }
-
-            visualization_msgs::Marker pred_dots;
-            pred_dots.header.frame_id = "map";
-            pred_dots.id = rviz_id::PREDICTION;
-            pred_dots.ns = "predicted_pose";
-            pred_dots.type = visualization_msgs::Marker::POINTS;
-            pred_dots.scale.x = 1.0;
-            pred_dots.scale.y = 0.2;
-            pred_dots.scale.z = 0.2;
-            pred_dots.action = visualization_msgs::Marker::ADD;
-            pred_dots.pose.orientation.w = 1.0;
-            pred_dots.color.g = 0.0;
-            pred_dots.color.r = 1.0;
-            pred_dots.color.a = 1.0;
-            for (int i=0; i<N_+1; i++)
-            {
-                geometry_msgs::Point p;
-                p.x = QPSolution(i*nx_);
-                p.y = QPSolution(i*nx_+1);
-                pred_dots.points.push_back(p);
-            }
 
             visualization_msgs::Marker borderlines;
             borderlines.header.frame_id = "map";
@@ -998,6 +914,31 @@ class PurePursuit
 
         void poseCallback(const geometry_msgs::PoseStamped::ConstPtr& pose_msg)
         {
+            try
+            {
+                tf_left_to_map_ = tf_buffer_.lookupTransform("map","back_left_wheel", ros::Time(0));
+            }
+            catch(tf::TransformException& ex)
+            {
+                ROS_ERROR("%s", ex.what());
+                ros::Duration(0.1).sleep();
+            }
+            const auto left_translation = tf_left_to_map_.transform.translation;
+            double xc2_ = left_translation.x;
+            double yc2_ = left_translation.y;
+            try
+            {
+                tf_right_to_map_ = tf_buffer_.lookupTransform("map","back_right_wheel", ros::Time(0));
+            }
+            catch(tf::TransformException& ex)
+            {
+                ROS_ERROR("%s", ex.what());
+                ros::Duration(0.1).sleep();
+            }
+            const auto right_translation = tf_right_to_map_.transform.translation;
+            double xc1_ = right_translation.x;
+            double yc1_ = right_translation.y;
+
             // Read pose message and store heading + global pose in a waypoint
             auto current_pose = Waypoint(pose_msg);
 
@@ -1006,8 +947,8 @@ class PurePursuit
             ego_car_.theta = current_pose.heading;
 
             std::vector<double> ego_state1;
-            ego_state1.push_back(ego_car_.x);
-            ego_state1.push_back(ego_car_.y);
+            ego_state1.push_back(xc1_);
+            ego_state1.push_back(yc1_);
             
             // Transform waypoints to baselink frame
             const auto transformed_waypoints = transform(global_path_, current_pose);
@@ -1017,18 +958,19 @@ class PurePursuit
 
             auto best_waypoint = global_path_[best_waypoint_idx];
 
+            add_waypoint_viz(best_waypoint, "map", 0.0, 1.0, 0.0, 1.0, 0.2, 0.2, 0.2);
+
 
             mpc_constraints_.push_back(ego_state1);
 
             std::vector<double> ego_state2;
-            ego_state2.push_back(ego_car_.x);
-            ego_state2.push_back(ego_car_.y);
+            ego_state2.push_back(xc2_);
+            ego_state2.push_back(yc2_);
             mpc_constraints_.push_back(ego_state2);
 
-            ROS_INFO("constraints_size after initial pose: %d", mpc_constraints_.size());
+            visualizeConstraint();
 
-            //note the time when the pose is recorded
-            // std::chrono::steady_clock::time_point previous_time = std::chrono::steady_clock::now();
+            ROS_INFO("constraints_size after initial pose: %d", mpc_constraints_.size());
 
             //linear model weight factor
             double alpha = 0.02;
@@ -1052,11 +994,11 @@ class PurePursuit
             double next_y_opp = current_pose.y;
             double initial_heading = current_pose.heading; //the current yaw of the odom. Should be zero?
 
-            // ROS_INFO("Current heading: %f", steering_angle);
+            // // ROS_INFO("Current heading: %f", steering_angle);
 
-            // double opp_vel = current_pose.speed;
+            // // double opp_vel = current_pose.speed;
             double opp_vel = 2.5;
-            // ROS_INFO("%f",opp_vel);
+            // // ROS_INFO("%f",opp_vel);
 
             const double pp_steering_angle = PPAngle(best_waypoint);
             // ROS_INFO()
@@ -1064,12 +1006,6 @@ class PurePursuit
 
             for(int i=0; i<=N_; i++)
             {
-                //note the current time
-                // std::chrono::steady_clock::time_point current_time = std::chrono::steady_clock::now();
-                // size_t dt = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - previous_time).count();
-                // ROS_INFO("dt: %f iteration i = %d", dt, i);
-
-                // ROS_INFO("pp_steering_angle: %f at iteration i = %d", pp_steering_angle, i);
 
                 double final_steering_angle = (1 - pow(alpha, i))*(pp_steering_angle)*2.0;
                 steer_opp_car_poses.push_back(final_steering_angle); 
@@ -1090,141 +1026,66 @@ class PurePursuit
                 y_opp_car_poses.push_back(next_y_opp);
             }
 
-            PublishMarkers(x_opp_car_poses, y_opp_car_poses);
+            // PublishMarkers(x_opp_car_poses, y_opp_car_poses);
 
-//            std::vector<Eigen::VectorXd> ref_trajectory;
-//            std::vector<Eigen::VectorXd> ref_input;
-//
-//            for(int i = 0; i < x_opp_car_poses.size(); i++)
-//            {
-//                Eigen::VectorXd traj(nx_);
-//                Eigen::VectorXd input(nu_);
-//
-//                traj(0) = x_opp_car_poses[i];
-//                traj(1) = y_opp_car_poses[i];
-//                traj(2) = yaw_opp_car_poses[i];
-//
-//                input(0) = opp_vel;
-//                input(1) = steer_opp_car_poses[i];
-//
-//                ref_trajectory.push_back(traj);
-//                ref_input.push_back(input);
-//                
-//            }
-//            ROS_INFO("Exited reference loading!");
+           std::vector<Eigen::VectorXd> ref_trajectory;
+           std::vector<Eigen::VectorXd> ref_input;
 
-            // Dubins path
-            double start[] = {ego_car_.x, ego_car_.y, ego_car_.theta};
-            double goal[] = {best_waypoint.x, best_waypoint.y, best_waypoint.heading};
+           for(int i = 0; i < x_opp_car_poses.size(); i++)
+           {
+               Eigen::VectorXd traj(nx_);
+               Eigen::VectorXd input(nu_);
 
-            double turning_radius = 1.5;
+               traj(0) = x_opp_car_poses[i];
+               traj(1) = y_opp_car_poses[i];
+               traj(2) = yaw_opp_car_poses[i];
 
-            DubinsPath path;
-            double x = 0.0;
+               input(0) = opp_vel;
+               input(1) = steer_opp_car_poses[i];
 
-            std::vector<Eigen::VectorXd> ref_trajectory;
-            std::vector<Eigen::VectorXd> ref_input;
+               ref_trajectory.push_back(traj);
+               ref_input.push_back(input);
+               
+            }
+           ROS_INFO("Exited reference loading!");
 
-            dubins_init(start, goal, turning_radius, &path);
-            double path_length = dubins_path_length(&path);
+           visualizeDubins(ref_trajectory);
+           // ROS_INFO("Done with Dubin's path, size: %d", ref_trajectory.size());
+           initMPC(ref_trajectory, ref_input, opp_vel);
 
-            int i = 0;
+        }
 
-            while (x < path_length)
+        void visualizeDubins(std::vector<Eigen::VectorXd>& ref_traj)
+        {
+            visualization_msgs::Marker traj_ref;
+            geometry_msgs::Point p;
+
+            traj_ref.header.stamp = ros::Time::now();
+            traj_ref.header.frame_id = "map";
+            traj_ref.id = rviz_id::TRAJECTORY_REF;
+            traj_ref.ns = "reference_traj";
+            traj_ref.type = visualization_msgs::Marker::LINE_STRIP;
+            traj_ref.scale.x = traj_ref.scale.y = 0.04;
+            traj_ref.scale.z = 0.02;
+            traj_ref.action = visualization_msgs::Marker::ADD;
+            traj_ref.pose.orientation.w = 1.0;
+            traj_ref.color.g = 1.0;
+            traj_ref.color.a = 1.0;
+
+            for (int i=0; i<ref_traj.size(); i++)
             {
-                double q[3];
-                dubins_path_sample(&path, x, q);
+                p.x = ref_traj[i](0);
+                p.y = ref_traj[i](1);
 
-                Eigen::VectorXd traj(nx_);
-                Eigen::VectorXd input(nu_);
-
-                traj(0) = q[0];
-                traj(1) = q[1];
-                traj(2) = q[2];
-
-                input(1) = 0.02*i;
-                input(0) = 3.5;
-
-                ref_trajectory.push_back(traj);
-                ref_input.push_back(input);
-
-                x += step_size_;
-                i++;
+                traj_ref.points.push_back(p);
             }
 
-            initMPC(ref_trajectory, ref_input, opp_vel);
+            visualization_msgs::MarkerArray dubins_markers;
+            // mpc_markers.markers.push_back(pred_dots);
+            // mpc_markers.markers.push_back(borderlines);
+            dubins_markers.markers.push_back(traj_ref);
 
-            // // Transform waypoints to baselink frame
-            // const auto transformed_waypoints = transform(global_path_, current_pose);// tf_buffer_, tf_listener_);
-
-            // // Find best waypoint to track
-            // const auto best_waypoint = find_best_waypoint(transformed_waypoints, lookahead_d_);//, last_waypt_idx_);
-
-            // // Transform the waypoint to base_link frame
-            // geometry_msgs::TransformStamped map_to_base_link;
-            // map_to_base_link = tf_buffer_.lookupTransform("base_link", "map", ros::Time(0));
-
-            // geometry_msgs::Pose goal_waypoint;
-            // goal_waypoint.position.x = global_path_[best_waypoint].x;
-            // goal_waypoint.position.y = global_path_[best_waypoint].y;
-            // goal_waypoint.position.z = 0;
-            // goal_waypoint.orientation.x = 0;
-            // goal_waypoint.orientation.y = 0;
-            // goal_waypoint.orientation.z = 0;
-            // goal_waypoint.orientation.w = 1;
-
-            // tf2::doTransform(goal_waypoint, goal_waypoint, map_to_base_link);
-
-            // add_waypoint_viz(goal_waypoint, "base_link", 0.0, 1.0, 0.0, 1.0, 0.2, 0.2, 0.2);
-
-            // // Calculate steering angle
-            // const double steering_angle = 0.6*2*goal_waypoint.position.y/(lookahead_d_ * lookahead_d_);
-            // double current_speed = 4;
-           
-            // // Publish drive message
-            // ackermann_msgs::AckermannDriveStamped drive_msg;
-            // drive_msg.header.frame_id = "base_link";
-            // drive_msg.drive.steering_angle = steering_angle;
-
-            // // Threshold steering angle for steering lock and velocity for turns
-            // if (steering_angle > 0.1)
-            // {
-            //     if (steering_angle > 0.2)
-            //     {
-            //         drive_msg.drive.speed = 4.0;
-            //         if (steering_angle > 0.4)
-            //         {
-            //             drive_msg.drive.steering_angle = 0.4;
-            //         }
-            //     }
-            //     else
-            //     {
-            //         drive_msg.drive.speed = 4.5;
-            //     }
-            // }
-            // else if (steering_angle < -0.1)
-            // {
-            //     if (steering_angle < -0.2)
-            //     {
-            //         drive_msg.drive.speed = 4.0;
-            //         if (steering_angle < -0.4)
-            //         {
-            //             drive_msg.drive.speed = -0.4;
-            //         }
-            //     }
-            //     else
-            //     {
-            //         drive_msg.drive.speed = 4.5;
-            //     }
-            // }
-            // else
-            // {
-            //     drive_msg.drive.speed = 4.5;
-            // }
-            // // drive_msg.drive.speed = global_path_[best_waypoint].desired_vel;
-            
-            // drive_pub_.publish(drive_msg);
-
+            dubins_viz_pub_.publish(dubins_markers);
         }
 
     private:
@@ -1239,6 +1100,7 @@ class PurePursuit
         ros::Publisher mpc_markers2;
         ros::Subscriber scan_sub_;
         ros::Publisher mpc_viz_pub_;
+        ros::Publisher dubins_viz_pub_;
 
         //state variables
         geometry_msgs::Pose2D ego_car_;
@@ -1271,7 +1133,8 @@ class PurePursuit
         tf2_ros::Buffer tf_buffer_;
         tf2_ros::TransformListener tf_listener_;
         geometry_msgs::TransformStamped tf_laser_to_map_;
-
+        geometry_msgs::TransformStamped tf_left_to_map_; 
+        geometry_msgs::TransformStamped tf_right_to_map_;
         // MPC variables
         std::vector<std::vector<double>> mpc_constraints_;
         // vector<Eigen::Vector3d> ref_trajectory_;

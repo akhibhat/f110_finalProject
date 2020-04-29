@@ -1,9 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-<<<<<<< HEAD
 project(pure_pursuit_new)
-=======
-project(pure_pursuit_mihir)
->>>>>>> 1448b8823b05d5ff74f8384216c2ce32860570cb
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 add_compile_options(-std=c++11)

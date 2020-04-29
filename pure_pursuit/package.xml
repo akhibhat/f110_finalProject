@@ -1,10 +1,6 @@
 <?xml version="1.0"?>
 <package format="2">
-<<<<<<< HEAD
   <name>pure_pursuit_new</name>
-=======
-  <name>pure_pursuit_mihir</name>
->>>>>>> 1448b8823b05d5ff74f8384216c2ce32860570cb
   <version>0.0.0</version>
   <description>The pure_pursuit package</description>
 
