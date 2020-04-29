@@ -9,4 +9,6 @@
 
     <node pkg="planner" type="planner_node" name="planner" output="screen"/>
 
+    <node pkg="planner" type="execute_mpc.py" name="execute" output="screen"/>
+
 </launch>
