@@ -1,7 +1,7 @@
 # Config file for planner
 
 # Constants for tuning
-lookahead_distance: 2.2
+lookahead_distance: 1.8
 
 bubble_radius: 0.40
 
@@ -9,16 +9,18 @@ gap_threshold: 2.0
 gap_size_threshold: 30
 
 inflation_radius: 3
-gap_bubble: 5.0
+gap_bubble: 1.0
 
-max_scan: 7.0
+max_scan: 5.0
 
 folder_path: "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject"
 delimiter: ","
 
-collision_points: 50
+collision_points: 100
 
 alpha: 0.8
+ref_alpha: 0.02
+max_acc: 9.51
 
 # Subscriber topics
 scan_topic: "/scan"
@@ -35,9 +37,12 @@ endpoints: "/waypoint"
 mpc: "/mpc"
 dubins: "/dubins"
 constraints: "/constraints"
+inputs: "/mpc_inputs"
 
 # TF Frames
 map_frame: "map"
 ego_car: "ego_racecar/base_link"
 opp_car: "opp_racecar/base_link"
 ego_laser: "ego_racecar/laser"
+left_rear_wheel: "ego_racecar/back_left_wheel"
+right_rear_wheel: "ego_racecar/back_right_wheel"

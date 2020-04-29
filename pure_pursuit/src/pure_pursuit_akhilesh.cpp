@@ -960,7 +960,6 @@ class PurePursuit
 
             add_waypoint_viz(best_waypoint, "map", 0.0, 1.0, 0.0, 1.0, 0.2, 0.2, 0.2);
 
-
             mpc_constraints_.push_back(ego_state1);
 
             std::vector<double> ego_state2;

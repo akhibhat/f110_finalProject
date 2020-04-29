@@ -13,6 +13,7 @@
 #include <visualization_msgs/MarkerArray.h>
 #include <nav_msgs/OccupancyGrid.h>
 #include <geometry_msgs/Pose2D.h>
+#include <planner/Inputs.h>
 
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
@@ -64,6 +65,7 @@ class Planner
         ros::Publisher mpc_viz_pub_;
         ros::Publisher dubins_viz_pub_;
         ros::Publisher constraints_viz_pub_;
+        ros::Publisher mpc_input_pub_;
 
         // Other variables
         double lookahead_d_;
@@ -76,6 +78,8 @@ class Planner
         double gap_bubble_;
         bool too_close_;
         double alpha_;
+        double ref_alpha_;
+        double max_acc_;
 
         // Subscriber Topics
         std::string scan_topic_;
@@ -90,12 +94,15 @@ class Planner
         std::string dubins_topic_;
         std::string mpc_topic_;
         std::string constraints_topic_;
+        std::string input_topic_;
 
         // TF frames
         std::string map_frame_;
         std::string ego_base_frame_;
         std::string opp_base_frame_;
         std::string ego_laser_frame_;
+        std::string left_rear_frame_;
+        std::string right_rear_frame_;
 
         // Scan parameters
         size_t start_idx_;
@@ -121,6 +128,8 @@ class Planner
         geometry_msgs::TransformStamped tf_map_to_laser_;
         geometry_msgs::TransformStamped tf_laser_to_map_;
         geometry_msgs::TransformStamped tf_opp_to_ego_;
+        geometry_msgs::TransformStamped tf_left_to_map_;
+        geometry_msgs::TransformStamped tf_right_to_map_;
 
         // Tracks of waypoints
         std::vector<Waypoint> global_path_;
@@ -146,6 +155,8 @@ class Planner
         double max_speed_, max_steer_, C_l_, q_x_, q_y_, q_yaw_, r_v_, r_steer_, Ts_;
         double xp1_, yp1_;
         double xp2_, yp2_;
+        double xc1_, yc1_;
+        double xc2_, yc2_;
 
         Eigen::Matrix<double, nx_, nx_> Q_;
         Eigen::Matrix<double, nu_, nu_> R_;
@@ -169,6 +180,8 @@ class Planner
             nh_.getParam("/collision_points", num_pts_collision_);
             nh_.getParam("/gap_size_threshold", gap_size_threshold_);
             nh_.getParam("/alpha", alpha_);
+            nh_.getParam("/ref_alpha", ref_alpha_);
+            nh_.getParam("/max_acc", max_acc_);
 
             // Subscriber Topics
             nh_.getParam("/scan_topic", scan_topic_);
@@ -183,12 +196,15 @@ class Planner
             nh_.getParam("/dubins", dubins_topic_);
             nh_.getParam("/mpc", mpc_topic_);
             nh_.getParam("/constraints", constraints_topic_);
+            nh_.getParam("/inputs", input_topic_);
 
             // TF Frames
             nh_.getParam("/map_frame", map_frame_);
             nh_.getParam("/ego_car", ego_base_frame_);
             nh_.getParam("/opp_car", opp_base_frame_);
             nh_.getParam("/ego_laser", ego_laser_frame_);
+            nh_.getParam("/left_rear_wheel", left_rear_frame_);
+            nh_.getParam("/right_rear_wheel", right_rear_frame_);
 
             // MPC variables
             nh_.getParam("N", N_);
@@ -244,6 +260,7 @@ class Planner
             mpc_viz_pub_ = nh_.advertise<visualization_msgs::MarkerArray>(mpc_topic_,10);
             dubins_viz_pub_ = nh_.advertise<visualization_msgs::MarkerArray>(dubins_topic_, 10);
             constraints_viz_pub_ = nh_.advertise<visualization_msgs::MarkerArray>(constraints_topic_, 10);
+            mpc_input_pub_ = nh_.advertise<planner::Inputs>(input_topic_,1);
 
             scan_sub_ = nh_.subscribe(scan_topic_, 1, &Planner::scanCallback, this);
             opp_odom_sub_ = nh_.subscribe(opp_odom_topic_, 1, &Planner::oppOdomCallback, this);
@@ -277,8 +294,6 @@ class Planner
 
         void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
         {
-            // mpc_constraints_.clear();;
-
             updateStaticMap(scan_msg);
 
             if (!truncate_)
@@ -347,13 +362,6 @@ class Planner
             ego_car_.theta = yaw;
             current_ego_vel_ = odom_msg->twist.twist.linear.x;
 
-            // std::vector<double> ego_state;
-            // ego_state.push_back(ego_car_.x);
-            // ego_state.push_back(ego_car_.y);
-
-            // mpc_constraints_.push_back(ego_state);
-            // mpc_constraints_.push_back(ego_state);
-
             std::vector<Waypoint> waypoint_options;
 
             waypoint_options = findWaypoints();
@@ -361,66 +369,130 @@ class Planner
             optimal = findOptimalWaypoint();
             waypoint_options.push_back(optimal[0]);
             
-//            std::cout << "Number of options: " << waypoint_options.size() << "\n";
-
             auto best_waypoint = checkFeasibility(waypoint_options);
-
-//            std::cout << best_waypoint.x << "\n";
-//            std::cout << best_waypoint.y << "\n";
 
             add_waypoint_viz(best_waypoint, map_frame_,0.0,1.0,0.0,1.0,0.2,0.2,0.2);
 
-            double start[] = { ego_car_.x, ego_car_.y, ego_car_.theta };
-            double goal[] = {best_waypoint.x, best_waypoint.y, best_waypoint.heading};
+            //REFERENCE TRAJECTORY USING PURE PURSUIT
+            const double ref_steering_angle = ReferencePPAngle(best_waypoint);
 
-            double turning_radius = 1.5; //TODO
-
-            DubinsPath path;
-            double x = 0.0;
+            double next_x = ego_car_.x;
+            double next_y = ego_car_.y;
+            double initial_yaw = ego_car_.theta;
 
             std::vector<Eigen::VectorXd> ref_trajectory;
             std::vector<Eigen::VectorXd> ref_input;
 
-            dubins_init(start, goal, turning_radius, &path);
-            double path_length = dubins_path_length(&path);
+            double ref_speed = current_ego_vel_;
 
-            int i = 0;
+            Eigen::VectorXd traj(nx_);
+            Eigen::VectorXd input(nu_);
 
-            while (x < path_length)
+            traj(0) = next_x;
+            traj(1) = next_y;
+            traj(2) = initial_yaw;
+
+            // if (ref_speed < 0.01)
+            // {
+            //     input(0) = 0.0;
+            // }
+            // else
+            // {
+                input(0) = ref_speed; //current_ego_vel_;
+            // }
+            input(1) = 0.0;
+
+            ref_trajectory.push_back(traj);
+            ref_input.push_back(input);
+
+            // ROS_INFO("Initial Speed: %f", ref_speed);
+
+            for (int i=0; i<N_; i++)
             {
-                double q[3];
-                dubins_path_sample(&path, x, q);
+                double final_steering_angle = (1 - pow(ref_alpha_, i))*(ref_steering_angle)*2.0;
+                double net_yaw = initial_yaw + final_steering_angle;
+
+                ref_speed += Ts_*max_acc_;
+                ref_speed = std::min(4.5, ref_speed);
+
+                // ROS_INFO("Speed at i: %d is : %f", i, ref_speed);
+                // ROS_INFO("TS_: %f, max_acc: %f", Ts_, max_acc_);
+
+                next_x = next_x + ref_speed*(cos(net_yaw))*Ts_;
+                next_y = next_y + ref_speed*(sin(net_yaw))*Ts_;
 
                 Eigen::VectorXd traj(nx_);
                 Eigen::VectorXd input(nu_);
 
-                traj(0) = q[0];
-                traj(1) = q[1];
-                traj(2) = q[2];
-                
-                input(1) = 0.02*i;
-                input(0) = 3.5;
+                traj(0) = next_x;
+                traj(1) = next_y;
+                traj(2) = net_yaw;
+
+                // if (current_ego_vel_ < 0.01)
+                // {
+                //     input(0) = 4.5;
+                // }
+                // else
+                // {
+                    input(0) = ref_speed; //current_ego_vel_;
+                // }
+                input(1) = final_steering_angle;
 
                 ref_trajectory.push_back(traj);
                 ref_input.push_back(input);
 
-                x += step_size_;
-                i++;
             }
+
+            // double start[] = { ego_car_.x, ego_car_.y, ego_car_.theta };
+            // double goal[] = {best_waypoint.x, best_waypoint.y, best_waypoint.heading};
+
+            // double turning_radius = 1.5; //TODO
+
+            // DubinsPath path;
+            // double x = 0.0;          
+
+            // dubins_init(start, goal, turning_radius, &path);
+            // double path_length = dubins_path_length(&path);
+
+            // int i = 0;
+
+            // while (x < path_length)
+            // {
+            //     double q[3];
+            //     dubins_path_sample(&path, x, q);
+
+            //     Eigen::VectorXd traj(nx_);
+            //     Eigen::VectorXd input(nu_);
+
+            //     traj(0) = q[0];
+            //     traj(1) = q[1];
+            //     traj(2) = q[2];
+                
+            //     input(1) = 0.02*i;
+            //     input(0) = 3.5;
+
+            //     ref_trajectory.push_back(traj);
+            //     ref_input.push_back(input);
+
+            //     x += step_size_;
+            //     i++;
+            // }
 
             visualizeDubins(ref_trajectory);
             visualizeConstraints();
 
+            initMPC(ref_trajectory, ref_input);
+
 //            publishPPSpeed(best_waypoint);
-            if (ref_trajectory.size() > N_)
-            {
-                initMPC(ref_trajectory, ref_input);
-                // publishPPSpeed(best_waypoint);
-            }
-            else
-            {
-                publishPPSpeed(best_waypoint);
-            }
+            // if (ref_trajectory.size() > N_)
+            // {
+            //     initMPC(ref_trajectory, ref_input);
+            //     // publishPPSpeed(best_waypoint);
+            // }
+            // else
+            // {
+            //     publishPPSpeed(best_waypoint);
+            // }
         }
 
         //This method predicts the path of the opponent car and updates the path as obstacles in the map
@@ -527,6 +599,34 @@ class Planner
                 viz_msg.markers.push_back(std::move(point));
             }
             pub_pred_markers_.publish(viz_msg);
+        }
+
+        double ReferencePPAngle(const Waypoint& waypoint)
+        {
+            geometry_msgs::Pose goal;
+            goal.position.x = waypoint.x;
+            goal.position.y = waypoint.y;
+            goal.position.z = 0;
+            goal.orientation.x = 0;
+            goal.orientation.y = 0;
+            goal.orientation.z = 0;
+            goal.orientation.w = 1;
+
+            try
+            {
+                tf_map_to_laser_ = tf_buffer_.lookupTransform(ego_base_frame_, map_frame_, ros::Time(0));
+            }
+            catch(tf::TransformException& ex)
+            {
+                ROS_ERROR("%s", ex.what());
+                ros::Duration(0.1).sleep();
+            }
+
+            tf2::doTransform(goal, goal, tf_map_to_laser_);
+
+            double steering_angle = (0.6*2*goal.position.y)/pow(lookahead_d_, 2);
+
+            return steering_angle;
         }
 
         //This method gives the steering angle based on pure-pursuit for opponent car
@@ -775,8 +875,6 @@ class Planner
                     current_size = 0;
                     std::vector<double> gap;
                     std::vector<size_t> gap_dist;
-                    // std::vector<double> start_gap_constraint;
-                    // std::vector<double> end_gap_constraint;
 
                     const double start_angle = start_idx_theta + angle_increment_*max_start_idx;
                     const double end_angle = start_idx_theta + angle_increment_*(max_start_idx+max_size_-1);
@@ -828,28 +926,11 @@ class Planner
             const double end_x_base = scan_ranges[max_start_idx+max_size_-1] * cos(end_angle);
             const double end_y_base = scan_ranges[max_start_idx+max_size_-1] * sin(end_angle);
 
-//            const double start_x_map = start_x_base*cos(yaw) - start_y_base*sin(yaw) + translation.x;
-//            const double start_y_map = start_x_base*sin(yaw) + start_y_base*cos(yaw) + translation.y;
-//
-//            const double end_x_map = end_x_base*cos(yaw) - end_y_base*sin(yaw) + translation.x;
-//            const double end_y_map = end_x_base*sin(yaw) + end_y_base*cos(yaw) + translation.y;
-//            start_gap_constraint.push_back(start_x_map);
-//            start_gap_constraint.push_back(start_y_map);
-//
-//            end_gap_constraint.push_back(end_x_map);
-//            end_gap_constraint.push_back(end_y_map);
-//
-//            mpc_constraints_.push_back(start_gap_constraint);
-//            mpc_constraints_.push_back(end_gap_constraint);
-
             xp1_ = start_x_base*cos(yaw) - start_y_base*sin(yaw) + translation.x;
             yp1_ = start_x_base*sin(yaw) + start_y_base*cos(yaw) + translation.y;
 
             xp2_ = end_x_base*cos(yaw) - end_y_base*sin(yaw) + translation.x;
             yp2_ = end_x_base*sin(yaw) + end_y_base*cos(yaw) + translation.y;
-
-
-//            ROS_INFO("Constraints size: %d", mpc_constraints_.size());
         }
 
         std::vector<Waypoint> findOptimalWaypoint()
@@ -940,8 +1021,6 @@ class Planner
 
                     if (goal_waypoint.position.x < 0) continue;
 
-                    // if (abs(goal_waypoint.position.y) > 1.5) continue;
-
                     double d = sqrt(pow(goal_waypoint.position.x,2) + pow(goal_waypoint.position.y,2));
                     double diff = std::abs(lookahead_d_ - d);
 
@@ -986,7 +1065,6 @@ class Planner
 
             tf2::doTransform(opt_waypoint, opt_waypoint, tf_map_to_laser_);
 
-            // double opt_steering = atan2(opt_waypoint.position.x, opt_waypoint.position.y);
             double opt_steering = (0.8*2*opt_waypoint.position.y)/(pow(lookahead_d_, 2));
 
             try
@@ -1419,13 +1497,31 @@ class Planner
 
             if(!solver.initSolver()) throw "failed to initialize solver";
 
-            if(!solver.solve()) return;
+            planner::Inputs mpc_input;
+            mpc_input.header.stamp = ros::Time::now();
+            mpc_input.header.frame_id = ego_base_frame_;
+
+            if(!solver.solve())
+            {
+                mpc_input.feasible = false;
+                mpc_input_pub_.publish(mpc_input);
+                return;
+            }
 
             Eigen::VectorXd QPSolution = solver.getSolution();
 
             visualizeMPC(QPSolution);
 
-            executeMPC(QPSolution);
+            const auto start_idx = (N_+1)*nx_;
+
+            for (int i=start_idx; i<QPSolution.size(); i+=2)
+            {
+                mpc_input.speed.push_back(QPSolution(i));
+                mpc_input.steering.push_back(QPSolution(i+1));
+            }
+            mpc_input.feasible = true;
+
+            mpc_input_pub_.publish(mpc_input);
 
             solver.clearSolver();
         }
@@ -1466,46 +1562,44 @@ class Planner
 
         void halfSpaceConstraints(double& A11, double& A12, double& A21, double& A22, double& B11, double& B12)
         {
-//            double xc1, xc2, xp1, xp2;
-//            double yc1, yc2, yp1, yp2;
-//
-//            xc1 = mpc_constraints_[2][0];
-//            yc1 = mpc_constraints_[2][1];
-//
-//            xc2 = mpc_constraints_[3][0];
-//            yc2 = mpc_constraints_[3][1];
-//
-//            xp1 = mpc_constraints_[0][0];
-//            yp1 = mpc_constraints_[0][1];
-//
-//            xp2 = mpc_constraints_[1][0];
-//            yp2 = mpc_constraints_[1][1];
 
-            A11 = yp1_ - ego_car_.y;
-            A12 = ego_car_.x - xp1_;
-            A21 = ego_car_.y - yp2_;
-            A22 = xp2_ - ego_car_.x;
+            try
+            {
+                tf_left_to_map_ = tf_buffer_.lookupTransform(map_frame_, left_rear_frame_, ros::Time(0));
+            }
+            catch(tf::TransformException& ex)
+            {
+                ROS_ERROR("%s", ex.what());
+                ros::Duration(0.1).sleep();
+            }
 
-            B11 = -1*(ego_car_.y*xp1_ - yp1_*ego_car_.x);
-            B12 = -1*(yp2_*ego_car_.x - ego_car_.y*xp2_);
-        }
+            const auto left_translation = tf_left_to_map_.transform.translation;
 
-        void executeMPC(Eigen::VectorXd& QPSolution)
-        {
-            double speed = QPSolution((N_+1)*nx_);
-            double steering_angle = QPSolution((N_+1)*nx_+1);
+            xc2_ = left_translation.x;
+            yc2_ = left_translation.y;
 
-            if (steering_angle > 0.415) {steering_angle=0.415;}
-            if (steering_angle < -0.415) {steering_angle=-0.415;}
+            try
+            {
+                tf_right_to_map_ = tf_buffer_.lookupTransform(map_frame_, right_rear_frame_, ros::Time(0));
+            }
+            catch(tf::TransformException& ex)
+            {
+                ROS_ERROR("%s", ex.what());
+                ros::Duration(0.1).sleep();
+            }
 
-            ackermann_msgs::AckermannDriveStamped drive_msg;
-            drive_msg.header.stamp = ros::Time::now();
-            drive_msg.header.frame_id = ego_base_frame_;
-            drive_msg.drive.speed = speed;
-            drive_msg.drive.steering_angle = steering_angle;
-            drive_msg.drive.steering_angle_velocity = 1.0;
+            const auto right_translation = tf_right_to_map_.transform.translation;
 
-            drive_pub_.publish(drive_msg);
+            xc1_ = right_translation.x;
+            yc1_ = right_translation.y;
+
+            A11 = yp1_ - yc1_;
+            A12 = xc1_ - xp1_;
+            A21 = yc2_ - yp2_;
+            A22 = xp2_ - xc2_;
+
+            B11 = -1*(yc1_*xp1_ - yp1_*xc1_);
+            B12 = -1*(yp2_*xc2_ - yc2_*xp2_);
         }
 
         void visualizeDubins(std::vector<Eigen::VectorXd>& ref_traj)
@@ -1534,8 +1628,6 @@ class Planner
             }
 
             visualization_msgs::MarkerArray dubins_markers;
-            // mpc_markers.markers.push_back(pred_dots);
-            // mpc_markers.markers.push_back(borderlines);
             dubins_markers.markers.push_back(traj_ref);
 
             dubins_viz_pub_.publish(dubins_markers);
@@ -1556,22 +1648,13 @@ class Planner
             borderlines.color.r = 1.0;
             borderlines.color.a = 1.0;
 
-//            for (int i=0; i<mpc_constraints_.size(); i++)
-//            {
-//                geometry_msgs::Point border_point;
-//                border_point.x = mpc_constraints_[i][0];
-//                border_point.y = mpc_constraints_[i][1];
-//
-//                borderlines.points.push_back(border_point);
-//            }
-
             geometry_msgs::Point c1;
-            c1.x = ego_car_.x;
-            c1.y = ego_car_.y;
+            c1.x = xc1_;
+            c1.y = yc1_;
 
             geometry_msgs::Point c2;
-            c2.x = ego_car_.x;
-            c2.y = ego_car_.y;
+            c2.x = xc2_;
+            c2.y = yc2_;
 
             geometry_msgs::Point p1;
             p1.x = xp1_;
@@ -1582,8 +1665,8 @@ class Planner
             p2.y = yp2_;
 
             borderlines.points.push_back(c1);
-            borderlines.points.push_back(c2);
             borderlines.points.push_back(p1);
+            borderlines.points.push_back(c2);
             borderlines.points.push_back(p2);
 
             visualization_msgs::MarkerArray constraints;

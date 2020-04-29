@@ -1,17 +1,17 @@
 #state and input costs
-q_x : 5.0
-q_y : 5.0
+q_x : 10.0
+q_y : 10.0
 q_yaw : 1.0
-r_v : 2.0
-r_steer: 2.0
+r_v : 0.01
+r_steer: 0.01
 
 #state size and input size
 nx: 3
 nu: 2
 
 #Time Horizon and time-difference for each step
-N: 10
-Ts: 0.1
+N: 20
+Ts: 0.05
 
 #input limits
 max_speed: 12.00
