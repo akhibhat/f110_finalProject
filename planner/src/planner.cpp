@@ -285,11 +285,15 @@ class Planner
             std::string file2 = folder_path_ + "/waypoints_data/yaw_wp_inner0.75.csv";
             std::string file3 = folder_path_ + "/waypoints_data/yaw_wp_outer0.5.csv";
             std::string file4 = folder_path_ + "/waypoints_data/yaw_wp_outer1.0.csv";
+            std::string file5 = folder_path_ + "/waypoints_data/wp_inner_partial.csv";
 
             trajectory_options_.push_back(getTrack(file1));
             trajectory_options_.push_back(getTrack(file2));
             trajectory_options_.push_back(getTrack(file3));
             trajectory_options_.push_back(getTrack(file4));
+            trajectory_options_.push_back(getTrack(file5));
+
+            ROS_INFO("Finished reading waypoint data!");
         }
 
         void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
@@ -481,9 +485,9 @@ class Planner
             visualizeDubins(ref_trajectory);
             visualizeConstraints();
 
-            initMPC(ref_trajectory, ref_input);
+            // initMPC(ref_trajectory, ref_input);
 
-//            publishPPSpeed(best_waypoint);
+           publishPPSpeed(best_waypoint);
             // if (ref_trajectory.size() > N_)
             // {
             //     initMPC(ref_trajectory, ref_input);
@@ -542,8 +546,8 @@ class Planner
                 double final_steering_angle = (1 - pow(alpha_, i))*(pp_steering_angle)*3; //*3 is tunable parameter
                 double net_heading = initial_heading + final_steering_angle;
 
-                next_x_opp = next_x_opp + opp_vel*(cos(net_heading))*0.1; //(no of iterations * 0.1 = 1 second)
-                next_y_opp = next_y_opp + opp_vel*(sin(net_heading))*0.1;
+                next_x_opp = next_x_opp + opp_vel*(cos(net_heading))*0.05; //(no of iterations * 0.1 = 1 second)
+                next_y_opp = next_y_opp + opp_vel*(sin(net_heading))*0.05;
 
                 auto current_pose = Waypoint();
                 current_pose.x = next_x_opp;
@@ -985,7 +989,9 @@ class Planner
         }
 
         std::vector<Waypoint> findWaypoints()
-        {
+        {   
+            bool change = false;
+
             try
             {
                 tf_map_to_laser_ = tf_buffer_.lookupTransform(ego_laser_frame_, map_frame_, ros::Time(0));
@@ -1026,6 +1032,7 @@ class Planner
 
                     if (diff < waypoint_d)
                     {
+                        change = true;
                         const auto waypoint_map_idx = getMapIdx(trajectory_options_[i][j].x, trajectory_options_[i][j].y);
                         if (input_map_.data[waypoint_map_idx] == 100) continue;
                         waypoint_d = diff;
@@ -1034,6 +1041,11 @@ class Planner
                 }
 
                 waypoints.push_back(trajectory_options_[i][waypoint_idx]);
+            }
+
+            if (change != true)
+            {
+                ROS_INFO("In findWaypoints, NO WAYPOINT FOUND");
             }
 
             return waypoints;
@@ -1095,7 +1107,7 @@ class Planner
                 {
                     best_waypoint = waypoint_options[path_num_];
                     best_gaps_.clear();
-                    ROS_INFO("Choosing the optimal waypoint");
+                    // ROS_INFO("Choosing the optimal waypoint");
                     return best_waypoint;
                 }
             }
@@ -1191,7 +1203,7 @@ class Planner
                 Waypoint waypoint{};
                 waypoint.x = std::stod(vec[0]);
                 waypoint.y = std::stod(vec[1]);
-                waypoint.heading = std::stod(vec[2]);
+                // waypoint.heading = std::stod(vec[2]);
                 waypoint.speed = 0.0;
 
                 trajectory.push_back(waypoint);
@@ -1219,7 +1231,7 @@ class Planner
                 Waypoint waypoint{};
                 waypoint.x = std::stod(vec[0]);
                 waypoint.y = std::stod(vec[1]);
-                waypoint.heading = std::stod(vec[2]);
+                // waypoint.heading = std::stod(vec[2]);
                 waypoint.speed = 0.0;
 
                 trajectory.push_back(waypoint);
