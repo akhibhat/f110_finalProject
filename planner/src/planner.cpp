@@ -14,6 +14,7 @@
 #include <nav_msgs/OccupancyGrid.h>
 #include <geometry_msgs/Pose2D.h>
 #include <planner/Inputs.h>
+#include <planner/Bezier.h>
 
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
@@ -229,7 +230,7 @@ class Planner
 
             truncate_ = false;
             
-            optimal_waypoint_file_ = folder_path_ + "/waypoints_data/yaw_wp_outer1.0.csv";
+            optimal_waypoint_file_ = folder_path_ + "/waypoints_data/wp_with_yaw.csv";
             path_num_ = 4;
 
             clear_obstacles_count_ = 0;
@@ -301,14 +302,14 @@ class Planner
             std::string file1 = folder_path_ + "/waypoints_data/yaw_wp_inner0.5.csv";
             std::string file2 = folder_path_ + "/waypoints_data/yaw_wp_inner0.75.csv";
             std::string file3 = folder_path_ + "/waypoints_data/yaw_wp_outer0.5.csv";
-            std::string file4 = folder_path_ + "/waypoints_data/wp_with_yaw.csv";
-            std::string file5 = folder_path_ + "/waypoints_data/wp_inner_partial.csv";
+            std::string file4 = folder_path_ + "/waypoints_data/yaw_wp_outer1.0.csv";
+            // std::string file5 = folder_path_ + "/waypoints_data/wp_inner_partial.csv";
 
             trajectory_options_.push_back(getTrack(file1));
             trajectory_options_.push_back(getTrack(file2));
             trajectory_options_.push_back(getTrack(file3));
             trajectory_options_.push_back(getTrack(file4));
-            trajectory_options_.push_back(getTrack(file5));
+            // trajectory_options_.push_back(getTrack(file5));
 
             ROS_INFO("Finished reading waypoint data!");
         }
@@ -360,7 +361,7 @@ class Planner
 
             // eliminateBubble(&filtered_ranges, closest_idx, closest_dist);
 
-            ROS_DEBUG("Eliminated safety bubble!");
+            // ROS_DEBUG("Eliminated safety bubble!");
 
             scan_hits_ = filtered_ranges;
 
@@ -387,9 +388,9 @@ class Planner
 
             std::vector<Waypoint> waypoint_options;
 
-            waypoint_options = findWaypoints();
+            waypoint_options = findWaypoints(lookahead_d_);
             std::vector<Waypoint> optimal;
-            optimal = findOptimalWaypoint();
+            optimal = findOptimalWaypoint(lookahead_d_);
             waypoint_options.push_back(optimal[0]);
             
             auto best_waypoint = checkFeasibility(waypoint_options);
@@ -409,66 +410,131 @@ class Planner
             findGapConstraints(best_waypoint);
 
             //REFERENCE TRAJECTORY USING PURE PURSUIT
-            const double ref_steering_angle = ReferencePPAngle(best_waypoint);
+           const double ref_steering_angle = ReferencePPAngle(best_waypoint);
 
-            double next_x = ego_car_.x;
-            double next_y = ego_car_.y;
-            double initial_yaw = ego_car_.theta;
+           double next_x = ego_car_.x;
+           double next_y = ego_car_.y;
+           double initial_yaw = ego_car_.theta;
 
             std::vector<Eigen::VectorXd> ref_trajectory;
             std::vector<Eigen::VectorXd> ref_input;
+//
+           double ref_speed = current_ego_vel_;
 
-            double ref_speed = current_ego_vel_;
+           Eigen::VectorXd traj(nx_);
+           Eigen::VectorXd input(nu_);
 
-            Eigen::VectorXd traj(nx_);
-            Eigen::VectorXd input(nu_);
+           traj(0) = next_x;
+           traj(1) = next_y;
+           traj(2) = initial_yaw;
 
-            traj(0) = next_x;
-            traj(1) = next_y;
-            traj(2) = initial_yaw;
 
-            input(0) = 0.0;//ref_speed; //current_ego_vel_;
+           input(0) = ref_speed; //current_ego_vel_;
+           input(1) = 0.0;
+
+           ref_trajectory.push_back(traj);
+           ref_input.push_back(input);
+//
+           // ROS_INFO("Initial Speed: %f", ref_speed);
+
+           for (int i=0; i<N_; i++)
+           {
+               double final_steering_angle = (1 - pow(ref_alpha_, i))*(ref_steering_angle)*2.0;
+               double net_yaw = initial_yaw + final_steering_angle;
+
+               ref_speed += Ts_*max_acc_;
+               ref_speed = std::min(4.5, ref_speed);
+
+               // ROS_INFO("Speed at i: %d is : %f", i, ref_speed);
+               // ROS_INFO("TS_: %f, max_acc: %f", Ts_, max_acc_);
+
+               next_x = next_x + ref_speed*(cos(net_yaw))*Ts_;
+               next_y = next_y + ref_speed*(sin(net_yaw))*Ts_;
+
+               Eigen::VectorXd traj(nx_);
+               Eigen::VectorXd input(nu_);
+
+               traj(0) = next_x;
+               traj(1) = next_y;
+               traj(2) = net_yaw;
+
+               input(0) = ref_speed; //current_ego_vel_;
+
+               input(1) = final_steering_angle;
+
+               ref_trajectory.push_back(traj);
+               ref_input.push_back(input);
+
+           }
+
+            // Curve* curve = new Bezier();
+            // curve->set_steps(2*N_);
+
+            // curve->add_way_point(Vector(ego_car_.x, ego_car_.y, ego_car_.theta));
+
+            // Waypoint final_waypoint;
+            
+            // for (int i=0; i<3; i++)
+            // {
+            //     std::vector<Waypoint> waypoints;
+            //     double lookahead = i + 1.0;
+            //     waypoints = findWaypoints(lookahead);
+            //     std::vector<Waypoint> opt = findOptimalWaypoint(lookahead);
+            //     waypoints.push_back(opt[0]);
+
+            //     auto waypoint_b = checkFeasibility(waypoints);
+
+            //     if (i==2)
+            //     {
+            //         final_waypoint = waypoint_b;
+            //     }
+
+            //     curve->add_way_point(Vector(waypoint_b.x, waypoint_b.y, 0));
             // }
-            input(1) = 0.0;
 
-            ref_trajectory.push_back(traj);
-            ref_input.push_back(input);
+            // double yaw_diff = final_waypoint.heading - ego_car_.theta;
 
-            for (int i=0; i<N_; i++)
-            {
-                double final_steering_angle = (1 - pow(ref_alpha_, i))*(ref_steering_angle)*3.0;
-                double net_yaw = initial_yaw + final_steering_angle;
+            // double initial_heading = ego_car_.theta;
 
-                ref_speed += Ts_*max_acc_;
-                ref_speed = std::min(4.5, ref_speed);
+            // auto ref_steering = ReferencePPAngle(final_waypoint);
+            // double ref_speed = current_ego_vel_;
 
-                next_x = next_x + ref_speed*(cos(net_yaw))*Ts_;
-                next_y = next_y + ref_speed*(sin(net_yaw))*Ts_;
+            // for (int i=0; i<2*N_; i++)
+            // {   
+            //     double final_steering_angle = (1 - pow(ref_alpha_, i))*(ref_steering)*2.0;
+            //     double net_heading = initial_heading + final_steering_angle;
 
-                Eigen::VectorXd traj(nx_);
-                Eigen::VectorXd input(nu_);
+            //     Eigen::VectorXd traj(nx_);
 
-                traj(0) = next_x;
-                traj(1) = next_y;
-                traj(2) = net_yaw;
+            //     traj(0) = curve->node(i).x;
+            //     traj(1) = curve->node(i).y;
 
-                input(0) = 0.0; //ref_speed; //current_ego_vel_;
+            //     traj(2) = net_heading;//(yaw_diff * i)/(2*N_);
 
-                input(1) = 0.0;//final_steering_angle;
+            //     // std::cout << "Yaw angle at index " << i << ": " << traj(2) << "\n";
 
-                ref_trajectory.push_back(traj);
-                ref_input.push_back(input);
+            //     ref_trajectory.push_back(traj);
 
-            }
+            //     Eigen::VectorXd input(nu_);
+
+            //     ref_speed += Ts_*max_acc_;
+            //     ref_speed = std::min(4.5, ref_speed);
+
+
+            //     input(0) = ref_speed;
+            //     input(1) = final_steering_angle;
+            //     // ROS_INFO("yaw_diff: %f, C_l_: %f, ref_speed: %f", yaw_diff, C_l_, ref_speed);
+            //     // ROS_INFO("Angle at i: %d is %f and tan argument is %f", i, input(1), (yaw_diff));
+
+            //     ref_input.push_back(input);
+            // }
 
             visualizeTrajectory(ref_trajectory);
 
 
             initMPC(ref_trajectory, ref_input);
-            visualizeConstraints();
 
-            // publishPPSpeed(best_waypoint);
-
+//            publishPPSpeed(best_waypoint);
         }
 
         //This method predicts the path of the opponent car and updates the path as obstacles in the map
@@ -518,8 +584,8 @@ class Planner
                 double final_steering_angle = (1 - pow(alpha_, i))*(pp_steering_angle)*3; //*3 is tunable parameter
                 double net_heading = initial_heading + final_steering_angle;
 
-                next_x_opp = next_x_opp + opp_vel*(cos(net_heading))*0.1; //(no of iterations * 0.1 = 1 second)
-                next_y_opp = next_y_opp + opp_vel*(sin(net_heading))*0.1;
+                next_x_opp = next_x_opp + opp_vel*(cos(net_heading))*0.05; //(no of iterations * 0.1 = 1 second)
+                next_y_opp = next_y_opp + opp_vel*(sin(net_heading))*0.05;
 
                 auto current_pose = Waypoint();
                 current_pose.x = next_x_opp;
@@ -936,14 +1002,14 @@ class Planner
 
             // if (waypoint_angle < 0) continue; //TODO What to do?
 
-            const size_t waypoint_idx = round((waypoint_angle+1.57)/angle_increment_);
+            const int waypoint_idx = round((waypoint_angle+1.57)/angle_increment_);
 
-            size_t right_idx, left_idx;
+            int right_idx, left_idx;
 
             right_idx = 0;
-            left_idx = scan_hits_.size() -1;
+            left_idx = scan_hits_.size()-1;
 
-            for (size_t i=waypoint_idx; i>0; i--)
+            for (int i=waypoint_idx; i>0; i--)
             {
                 if (scan_hits_[i] <= gap_threshold_)
                 {
@@ -957,7 +1023,7 @@ class Planner
                 
             }
 
-            for (size_t i=waypoint_idx; i<scan_hits_.size(); i++)
+            for (int i=waypoint_idx; i<scan_hits_.size(); i++)
             {
                 if (scan_hits_[i] <= gap_threshold_)
                 {
@@ -970,8 +1036,13 @@ class Planner
                 }
             }
 
-            double right_angle = right_idx * angle_increment_ - 1.57;
-            double left_angle = left_idx * angle_increment_ - 1.57;
+            if (left_idx == right_idx)
+            {
+                ROS_INFO("Same indices!");
+            }
+
+            double right_angle = (right_idx) * angle_increment_ - 1.57;
+            double left_angle = (left_idx) * angle_increment_ - 1.57;
 
             // std::cout << "Angle difference: " << abs(right_angle-left_angle) << "\n";
 
@@ -1011,9 +1082,43 @@ class Planner
 
             xp2_ = end_x_base*cos(yaw) - end_y_base*sin(yaw) + translation.x;
             yp2_ = end_x_base*sin(yaw) + end_y_base*cos(yaw) + translation.y;
+
+            // std::cout << (yp2_-yp1_) << "\n";
+            
+            try
+            {
+                tf_left_to_map_ = tf_buffer_.lookupTransform(map_frame_, left_rear_frame_, ros::Time(0));
+            }
+            catch(tf::TransformException& ex)
+            {
+                ROS_ERROR("%s", ex.what());
+                ros::Duration(0.1).sleep();
+            }
+
+            const auto left_translation = tf_left_to_map_.transform.translation;
+
+            xc2_ = left_translation.x;
+            yc2_ = left_translation.y;
+
+            try
+            {
+                tf_right_to_map_ = tf_buffer_.lookupTransform(map_frame_, right_rear_frame_, ros::Time(0));
+            }
+            catch(tf::TransformException& ex)
+            {
+                ROS_ERROR("%s", ex.what());
+                ros::Duration(0.1).sleep();
+            }
+
+            const auto right_translation = tf_right_to_map_.transform.translation;
+
+            xc1_ = right_translation.x;
+            yc1_ = right_translation.y;
+
+            visualizeConstraints();
         }
 
-        std::vector<Waypoint> findOptimalWaypoint()
+        std::vector<Waypoint> findOptimalWaypoint(double& lookahead)
         {
             try
             {
@@ -1051,7 +1156,7 @@ class Planner
                 // if (abs(goal_waypoint.position.y > 1.5)) continue;
 
                 double d = sqrt(pow(goal_waypoint.position.x, 2) + pow(goal_waypoint.position.y, 2));
-                double diff = std::abs(lookahead_d_ - d);
+                double diff = std::abs(lookahead - d);
 
                 if (diff < waypoint_d)
                 {
@@ -1067,10 +1172,11 @@ class Planner
             return optimal_waypoint;
         }
 
-        std::vector<Waypoint> findWaypoints()
-        {   
-            bool change = false;
 
+
+        std::vector<Waypoint> findWaypoints(double& lookahead)
+        {
+            bool change = false;
             try
             {
                 tf_map_to_laser_ = tf_buffer_.lookupTransform(ego_laser_frame_, map_frame_, ros::Time(0));
@@ -1107,7 +1213,7 @@ class Planner
                     if (goal_waypoint.position.x < 0) continue;
 
                     double d = sqrt(pow(goal_waypoint.position.x,2) + pow(goal_waypoint.position.y,2));
-                    double diff = std::abs(lookahead_d_ - d);
+                    double diff = std::abs(lookahead - d);
 
                     if (diff < waypoint_d)
                     {
@@ -1182,7 +1288,7 @@ class Planner
 
             if (dist > gap_bubble_)
             {
-                if (abs(opt_steering)<0.55)
+                if (abs(opt_steering)<0.80)
                 {
                     best_waypoint = waypoint_options[path_num_];
                     best_gaps_.clear();
@@ -1310,7 +1416,7 @@ class Planner
                 Waypoint waypoint{};
                 waypoint.x = std::stod(vec[0]);
                 waypoint.y = std::stod(vec[1]);
-                // waypoint.heading = std::stod(vec[2]);
+                waypoint.heading = std::stod(vec[2]);
                 waypoint.speed = 0.0;
 
                 trajectory.push_back(waypoint);
@@ -1669,7 +1775,142 @@ class Planner
            mpc_input_pub_.publish(mpc_input);
 
            solver.clearSolver();
-        }
+
+        //     for (int i=0; i<N_+1; i++)
+        //     {
+        //         x_ref = ref_trajectory[i];
+        //         u_ref = ref_input[i];
+        //         getCarDynamics(Ad, Bd, hd, x_ref, u_ref);
+
+        //         // fill the H_matrix with state cost Q for the first (N+1)*nx
+        //         // diagonal and input cost R along the next (N+1)*nu diagonal
+        //         if (i > 0)
+        //         {
+        //             for (int row=0; row<nx_; row++)
+        //             {
+        //                 H_matrix.insert(i*nx_ + row, i*nx_ + row) = Q_(row, row);
+        //             }
+
+        //             for (int row=0; row<nu_; row++)
+        //             {
+        //                 H_matrix.insert(((N_+1)*nx_) + (i*nu_+row), ((N_+1)*nx_) + (i*nu_+row)) = R_(row, row);
+        //             }
+
+        //             g.segment<nx_>(i*nx_) << -Q_*x_ref;
+        //             g.segment<nu_>(((N_+1)*nx_) + i*nu_) << -R_*u_ref;
+        //         }
+
+        //         // fill the constraint matrix first with the dynamic constraint
+        //         // x_k+1 = Ad*x_k + Bd*u_k + hd
+        //         if (i < N_)
+        //         {
+        //             for (int row=0; row<nx_; row++)
+        //             {
+        //                 for (int col=0; col<nx_; col++)
+        //                 {
+        //                     A_c.insert((i+1)*nx_ + row, i*nx_ + col) = Ad(row, col);
+        //                 }
+        //             }
+
+        //             for (int row=0; row<nx_; row++)
+        //             {
+        //                 for (int col=0; col<nu_; col++)
+        //                 {
+        //                     A_c.insert((i+1)*nx_ + row, (N_+1)*nx_ + i*nu_ + col) = Bd(row, col);
+        //                 }
+        //             }
+
+        //             lb.segment<nx_>((i+1)*nx_) = -hd;
+        //             ub.segment<nx_>((i+1)*nx_) = -hd;
+        //         }
+
+        //         for (int row=0; row<nx_; row++)
+        //         {
+        //             A_c.insert(i*nx_+row, i*nx_+row)  = -1.0;
+        //         }
+
+        //         // fill Ax <= B
+        //         A_c.insert(((N_+1)*nx_) + 2*i, (i*nx_))= A11;
+        //         A_c.insert(((N_+1)*nx_) + 2*i, (i*nx_)+1) = A12;
+
+        //         A_c.insert(((N_+1)*nx_) + 2*i+1, (i*nx_)) = A21;
+        //         A_c.insert(((N_+1)*nx_) + 2*i+1, (i*nx_)+1) = A22;
+
+        //         lb(((N_+1)*nx_) + 2*i) = -OsqpEigen::INFTY;
+        //         ub(((N_+1)*nx_) + 2*i) = B11;
+
+        //         lb(((N_+1)*nx_) + 2*i+1) = -OsqpEigen::INFTY;
+        //         ub(((N_+1)*nx_) + 2*i+1) = B22;
+
+        //         // fill u_min < u < u_max in A_c
+        //         for(int row=0; row<nu_; row++)
+        //         {
+        //             A_c.insert((N_+1)*nx_+2*(N_+1)+i*nu_+row, (N_+1)*nx_+i*nu_+row) = 1.0;
+        //         }
+
+        //         lb((N_+1)*nx_ + 2*(N_+1) + i*nu_) = 0.0;
+        //         ub((N_+1)*nx_ + 2*(N_+1) + i*nu_) = max_speed_;
+
+        //         lb((N_+1)*nx_ + 2*(N_+1) + i*nu_ + 1) = -max_steer_;
+        //         ub((N_+1)*nx_ + 2*(N_+1) + i*nu_ + 1) = max_steer_;
+        //     }
+
+        //     // fill initial condition in lb and ub
+        //     lb.head(nx_) = -ref_trajectory[0];
+        //     ub.head(nx_) = -ref_trajectory[0];
+        //     lb((N_+1)*nx_ + 2*(N_+1)) = 3.5;
+        //     ub((N_+1)*nx_ + 2*(N_+1)) = 3.5;
+
+        //     Eigen::SparseMatrix<double> H_matrix_T = H_matrix.transpose();
+        //     Eigen::SparseMatrix<double> sparse_I((N_+1)*(nx_+nu_), (N_+1)*(nx_+nu_));
+        //     sparse_I.setIdentity();
+
+        //     H_matrix = 0.5*(H_matrix + H_matrix_T) + 0.0000001*sparse_I;
+
+        //     // osqp Eigen solver from https://robotology.github.io/osqp-eigen/doxygen/doc/html/index.html
+        //     // instantiate the solver
+        //     OsqpEigen::Solver solver;
+
+        //     solver.settings()->setWarmStart(true);
+        //     solver.data()->setNumberOfVariables((N_+1)*(nx_+nu_));
+        //     solver.data()->setNumberOfConstraints((N_+1)*nx_ + 2*(N_+1) + (N_+1)*nu_);
+
+        //     if(!solver.data()->setHessianMatrix(H_matrix)) throw "failed to set Hessian";
+        //     if(!solver.data()->setGradient(g)) throw "failed to set gradient";
+        //     if(!solver.data()->setLinearConstraintsMatrix(A_c)) throw "failed to set constraint matrix";
+        //     if(!solver.data()->setLowerBound(lb)) throw "failed to set lower bound";
+        //     if(!solver.data()->setUpperBound(ub)) throw "failed to set upper bound";
+
+        //     if(!solver.initSolver()) throw "failed to initialize solver";
+
+        //     planner::Inputs mpc_input;
+        //     mpc_input.header.stamp = ros::Time::now();
+        //     mpc_input.header.frame_id = ego_base_frame_;
+
+        //     if(!solver.solve())
+        //     {
+        //         mpc_input.feasible = false;
+        //         mpc_input_pub_.publish(mpc_input);
+        //         return;
+        //     }
+
+        //     Eigen::VectorXd QPSolution = solver.getSolution();
+
+        //     visualizeMPC(QPSolution);
+
+        //     const auto start_idx = (N_+1)*nx_;
+
+        //     for (int i=start_idx; i<QPSolution.size(); i+=2)
+        //     {
+        //         mpc_input.speed.push_back(QPSolution(i));
+        //         mpc_input.steering.push_back(QPSolution(i+1));
+        //     }
+        //     mpc_input.feasible = true;
+
+        //     mpc_input_pub_.publish(mpc_input);
+
+        //     solver.clearSolver();
+         }
 
         void getCarDynamics(Eigen::Matrix<double,nx_,nx_>& Ad, Eigen::Matrix<double,nx_,nu_>& Bd, Eigen::Matrix<double,nx_,1>& hd, Eigen::Matrix<double,nx_,1>& state, Eigen::Matrix<double,nu_,1>& input)
         {
@@ -1707,36 +1948,6 @@ class Planner
 
         void halfSpaceConstraints(double& A11, double& A12, double& A21, double& A22, double& B11, double& B12)
         {
-
-            try
-            {
-                tf_left_to_map_ = tf_buffer_.lookupTransform(map_frame_, left_rear_frame_, ros::Time(0));
-            }
-            catch(tf::TransformException& ex)
-            {
-                ROS_ERROR("%s", ex.what());
-                ros::Duration(0.1).sleep();
-            }
-
-            const auto left_translation = tf_left_to_map_.transform.translation;
-
-            xc2_ = left_translation.x;
-            yc2_ = left_translation.y;
-
-            try
-            {
-                tf_right_to_map_ = tf_buffer_.lookupTransform(map_frame_, right_rear_frame_, ros::Time(0));
-            }
-            catch(tf::TransformException& ex)
-            {
-                ROS_ERROR("%s", ex.what());
-                ros::Duration(0.1).sleep();
-            }
-
-            const auto right_translation = tf_right_to_map_.transform.translation;
-
-            xc1_ = right_translation.x;
-            yc1_ = right_translation.y;
 
             A11 = yp1_ - yc1_;
             A12 = xc1_ - xp1_;

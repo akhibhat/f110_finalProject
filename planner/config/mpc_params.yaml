@@ -10,7 +10,7 @@ nx: 3
 nu: 2
 
 #Time Horizon and time-difference for each step
-N: 20
+N: 5
 Ts: 0.05
 
 #input limits
