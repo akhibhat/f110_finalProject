@@ -408,7 +408,7 @@ class PurePursuit
             ROS_INFO("entering scanCallback");
             if (!truncate_)
             {
-                const size_t truncate_size = static_cast<size_t>((((2*3.14)/3)/(scan_msg->angle_max - scan_msg->angle_min))*scan_msg->ranges.size());
+                const size_t truncate_size = static_cast<size_t>((((1*3.14)/1)/(scan_msg->angle_max - scan_msg->angle_min))*scan_msg->ranges.size());
 
                 start_idx_ = (scan_msg->ranges.size()/2) - (truncate_size/2);
                 end_idx_ = (scan_msg->ranges.size()/2) + (truncate_size/2);
@@ -418,8 +418,8 @@ class PurePursuit
                 angle_increment_ = scan_msg->angle_increment;
             }
 
-            double start_idx_theta_ = scan_msg->angle_min + start_idx_*angle_increment_;
-            double end_idx_theta_ = scan_msg->angle_min + end_idx_*angle_increment_;
+            start_idx_theta_ = scan_msg->angle_min + start_idx_*angle_increment_;
+            // double end_idx_theta_ = scan_msg->angle_min + end_idx_*angle_increment_;
 
             // ROS_INFO("start_idx_theta_: %f, end_idx_theta_: %f", start_idx_theta_, end_idx_theta_);
             // ROS_DEBUG("Got truncated start and end indices!");
@@ -454,11 +454,13 @@ class PurePursuit
 
             auto closest_dist = filtered_ranges[closest_idx];
 
-            eliminateBubble(&filtered_ranges, closest_idx, closest_dist);
+            // eliminateBubble(&filtered_ranges, closest_idx, closest_dist);
 
             // ROS_DEBUG("Eliminated safety bubble!");
 
-            findbestGap(filtered_ranges, start_idx_theta_, end_idx_theta_);
+            scan_hits_ = filtered_ranges;
+
+            // findbestGap(filtered_ranges, start_idx_theta_, end_idx_theta_);
         }
 
         void eliminateBubble(std::vector<double>* scan_ranges, const size_t closest_idx, const double closest_dist)
@@ -481,6 +483,121 @@ class PurePursuit
             {
                 scan_ranges->at(i) = 0.0;
             }
+        }
+
+        void findGapConstraints(Waypoint& best_waypoint)
+        {
+            ROS_INFO("Scan ranges size: %d", scan_hits_.size());
+            ROS_INFO("Start index theta: %f", start_idx_theta_);
+            try
+            {
+                tf_map_to_laser_ = tf_buffer_.lookupTransform("laser", "map", ros::Time(0));
+            }
+            catch(tf::TransformException& ex)
+            {
+                ROS_ERROR("%s", ex.what());
+                ros::Duration(0.1).sleep();
+            }
+
+            geometry_msgs::Pose car_frame;
+            car_frame.position.x = best_waypoint.x;
+            car_frame.position.y = best_waypoint.y;
+            car_frame.position.z = 0;
+            car_frame.orientation.x = 0;
+            car_frame.orientation.y = 0;
+            car_frame.orientation.z = 0;
+            car_frame.orientation.w = 1;
+
+            tf2::doTransform(car_frame, car_frame, tf_map_to_laser_);
+
+            double waypoint_angle = atan2(car_frame.position.y, car_frame.position.x);
+
+            // if (waypoint_angle < 0) continue; //TODO What to do?
+
+            const int waypoint_idx = round((waypoint_angle+1.57)/angle_increment_);
+            ROS_INFO("Waypoint index: %d", waypoint_idx);
+
+            int right_idx, left_idx;
+
+            right_idx = 0;
+            left_idx = scan_hits_.size() -1;
+
+            for (int i=waypoint_idx; i>0; i--)
+            {
+                if (scan_hits_[i] <= gap_threshold_)
+                {
+                    ROS_INFO("found right hit: %d. distance: %f, gap_threshold_: %f", i, scan_hits_[i], gap_threshold_);
+                    right_idx = i + 40;
+                    if (right_idx > waypoint_idx)
+                    {
+                        right_idx = waypoint_idx;
+                    }
+                    break;
+                }
+                
+            }
+
+            for (int i=waypoint_idx; i<scan_hits_.size(); i++)
+            {
+                if (scan_hits_[i] <= gap_threshold_)
+                {
+                    ROS_INFO("found left hit i: %d. distance: %f, gap_threshold_: %f", i, scan_hits_[i], gap_threshold_);
+                    left_idx = i - 40;
+                    if (left_idx < waypoint_idx)
+                    {
+                        left_idx = waypoint_idx;
+                    }
+                    break;
+                }
+            }
+
+            double right_angle = right_idx * angle_increment_ - 1.57;
+            double left_angle = left_idx * angle_increment_ - 1.57;
+
+            ROS_INFO("left_idx: %d, left_angle: %f, distance: %f", left_idx, left_angle, scan_hits_[left_idx]);
+            ROS_INFO("right_idx: %d, right_angle: %f, distance: %f", right_idx, right_angle, scan_hits_[right_idx]);
+
+            // std::cout << "Angle difference: " << abs(right_angle-left_angle) << "\n";
+
+            try
+            {
+                tf_laser_to_map_ = tf_buffer_.lookupTransform("map", "laser", ros::Time(0));
+            }
+            catch(tf::TransformException& ex)
+            {
+                ROS_ERROR("%s", ex.what());
+                ros::Duration(0.1).sleep();
+            }
+
+            const auto translation = tf_laser_to_map_.transform.translation;
+            const auto orientation = tf_laser_to_map_.transform.rotation;
+
+            tf2::Quaternion q(orientation.x,
+                              orientation.y,
+                              orientation.z,
+                              orientation.w);
+            tf2::Matrix3x3 mat(q);
+
+            double roll, pitch, yaw;
+            mat.getRPY(roll, pitch, yaw);
+
+            double start_x_base, end_x_base;
+            double start_y_base, end_y_base;
+            
+            start_x_base = scan_hits_[right_idx] * cos(right_angle);
+            start_y_base = scan_hits_[right_idx] * sin(right_angle);
+
+            end_x_base = scan_hits_[left_idx] * cos(left_angle);
+            end_y_base = scan_hits_[left_idx] * sin(left_angle);
+
+            ROS_INFO("start_x_base: %f, start_y_base: %f", start_x_base, start_y_base);
+            ROS_INFO("end_x_base: %f, end_y_base: %f", end_x_base, end_y_base);
+ 
+            xp1_ = start_x_base*cos(yaw) - start_y_base*sin(yaw) + translation.x;
+            yp1_ = start_x_base*sin(yaw) + start_y_base*cos(yaw) + translation.y;
+
+            xp2_ = end_x_base*cos(yaw) - end_y_base*sin(yaw) + translation.x;
+            yp2_ = end_x_base*sin(yaw) + end_y_base*cos(yaw) + translation.y;
         }
 
         void findbestGap(const std::vector<double>& scan_ranges, double& start_idx_theta_, double& end_idx_theta_)
@@ -612,8 +729,6 @@ class PurePursuit
             mpc_constraints_.push_back(end_gap_constraint);
 
             ROS_INFO("constraints_size: %d", mpc_constraints_.size());
-
-
         }
 
 
@@ -960,6 +1075,19 @@ class PurePursuit
 
             add_waypoint_viz(best_waypoint, "map", 0.0, 1.0, 0.0, 1.0, 0.2, 0.2, 0.2);
 
+            findGapConstraints(best_waypoint);
+
+            std::vector<double> p1_;
+            p1_.push_back(xp1_);
+            p1_.push_back(yp1_);
+            mpc_constraints_.push_back(p1_);
+
+            std::vector<double> p2_;
+            p2_.push_back(xp2_);
+            p2_.push_back(yp2_);
+            mpc_constraints_.push_back(p2_);             
+
+
             mpc_constraints_.push_back(ego_state1);
 
             std::vector<double> ego_state2;
@@ -1110,6 +1238,8 @@ class PurePursuit
         double angle_increment_;
         bool truncate_;
         double max_scan_;
+        std::vector<double> scan_hits_;
+        double start_idx_theta_;
 
         //planner variables
         double bubble_radius_;
@@ -1127,6 +1257,9 @@ class PurePursuit
         std::string delimiter_;
         double step_size_;
 
+        double xp1_, yp1_;
+        double xp2_, yp2_;
+
         std::vector<Waypoint> global_path_;
         
         tf2_ros::Buffer tf_buffer_;
@@ -1134,6 +1267,7 @@ class PurePursuit
         geometry_msgs::TransformStamped tf_laser_to_map_;
         geometry_msgs::TransformStamped tf_left_to_map_; 
         geometry_msgs::TransformStamped tf_right_to_map_;
+        geometry_msgs::TransformStamped tf_map_to_laser_;
         // MPC variables
         std::vector<std::vector<double>> mpc_constraints_;
         // vector<Eigen::Vector3d> ref_trajectory_;
