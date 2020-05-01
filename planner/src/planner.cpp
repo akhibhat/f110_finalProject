@@ -14,6 +14,7 @@
 #include <nav_msgs/OccupancyGrid.h>
 #include <geometry_msgs/Pose2D.h>
 #include <planner/Inputs.h>
+#include <planner/Bezier.h>
 
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
@@ -340,9 +341,9 @@ class Planner
 
             auto closest_dist = filtered_ranges[closest_idx];
 
-            eliminateBubble(&filtered_ranges, closest_idx, closest_dist);
+            // eliminateBubble(&filtered_ranges, closest_idx, closest_dist);
 
-            ROS_DEBUG("Eliminated safety bubble!");
+            // ROS_DEBUG("Eliminated safety bubble!");
 
             scan_hits_ = filtered_ranges;
 
@@ -368,9 +369,9 @@ class Planner
 
             std::vector<Waypoint> waypoint_options;
 
-            waypoint_options = findWaypoints();
+            waypoint_options = findWaypoints(lookahead_d_);
             std::vector<Waypoint> optimal;
-            optimal = findOptimalWaypoint();
+            optimal = findOptimalWaypoint(lookahead_d_);
             waypoint_options.push_back(optimal[0]);
             
             auto best_waypoint = checkFeasibility(waypoint_options);
@@ -380,81 +381,134 @@ class Planner
             findGapConstraints(best_waypoint);
 
             //REFERENCE TRAJECTORY USING PURE PURSUIT
-            const double ref_steering_angle = ReferencePPAngle(best_waypoint);
-
-            double next_x = ego_car_.x;
-            double next_y = ego_car_.y;
-            double initial_yaw = ego_car_.theta;
-
+//            const double ref_steering_angle = ReferencePPAngle(best_waypoint);
+//
+//            double next_x = ego_car_.x;
+//            double next_y = ego_car_.y;
+//            double initial_yaw = ego_car_.theta;
+//
             std::vector<Eigen::VectorXd> ref_trajectory;
             std::vector<Eigen::VectorXd> ref_input;
+//
+//            double ref_speed = current_ego_vel_;
+//
+//            Eigen::VectorXd traj(nx_);
+//            Eigen::VectorXd input(nu_);
+//
+//            traj(0) = next_x;
+//            traj(1) = next_y;
+//            traj(2) = initial_yaw;
+//
+//            // if (ref_speed < 0.01)
+//            // {
+//            //     input(0) = 0.0;
+//            // }
+//            // else
+//            // {
+//            input(0) = ref_speed; //current_ego_vel_;
+//            // }
+//            input(1) = 0.0;
+//
+//            ref_trajectory.push_back(traj);
+//            ref_input.push_back(input);
+//
+//            // ROS_INFO("Initial Speed: %f", ref_speed);
+//
+//            for (int i=0; i<N_; i++)
+//            {
+//                double final_steering_angle = (1 - pow(ref_alpha_, i))*(ref_steering_angle)*2.0;
+//                double net_yaw = initial_yaw + final_steering_angle;
+//
+//                ref_speed += Ts_*max_acc_;
+//                ref_speed = std::min(4.5, ref_speed);
+//
+//                // ROS_INFO("Speed at i: %d is : %f", i, ref_speed);
+//                // ROS_INFO("TS_: %f, max_acc: %f", Ts_, max_acc_);
+//
+//                next_x = next_x + ref_speed*(cos(net_yaw))*Ts_;
+//                next_y = next_y + ref_speed*(sin(net_yaw))*Ts_;
+//
+//                Eigen::VectorXd traj(nx_);
+//                Eigen::VectorXd input(nu_);
+//
+//                traj(0) = next_x;
+//                traj(1) = next_y;
+//                traj(2) = net_yaw;
+//
+//                // if (current_ego_vel_ < 0.01)
+//                // {
+//                //     input(0) = 4.5;
+//                // }
+//                // else
+//                // {
+//                input(0) = ref_speed; //current_ego_vel_;
+//                // }
+//                input(1) = final_steering_angle;
+//
+//                ref_trajectory.push_back(traj);
+//                ref_input.push_back(input);
+//
+//            }
 
+            Curve* curve = new Bezier();
+            curve->set_steps(2*N_);
+
+            curve->add_way_point(Vector(ego_car_.x, ego_car_.y, ego_car_.theta));
+
+            Waypoint final_waypoint;
+            
+            for (int i=0; i<3; i++)
+            {
+                std::vector<Waypoint> waypoints;
+                double lookahead = i + 1.0;
+                waypoints = findWaypoints(lookahead);
+                std::vector<Waypoint> opt = findOptimalWaypoint(lookahead);
+                waypoints.push_back(opt[0]);
+
+                auto waypoint_b = checkFeasibility(waypoints);
+
+                if (i==2)
+                {
+                    final_waypoint = waypoint_b;
+                }
+
+                curve->add_way_point(Vector(waypoint_b.x, waypoint_b.y, 0));
+            }
+
+            double yaw_diff = final_waypoint.heading - ego_car_.theta;
+
+            auto ref_steering = ReferencePPAngle(final_waypoint);
             double ref_speed = current_ego_vel_;
 
-            Eigen::VectorXd traj(nx_);
-            Eigen::VectorXd input(nu_);
-
-            traj(0) = next_x;
-            traj(1) = next_y;
-            traj(2) = initial_yaw;
-
-            // if (ref_speed < 0.01)
-            // {
-            //     input(0) = 0.0;
-            // }
-            // else
-            // {
-            input(0) = ref_speed; //current_ego_vel_;
-            // }
-            input(1) = 0.0;
-
-            ref_trajectory.push_back(traj);
-            ref_input.push_back(input);
-
-            // ROS_INFO("Initial Speed: %f", ref_speed);
-
-            for (int i=0; i<N_; i++)
+            for (int i=0; i<2*N_; i++)
             {
-                double final_steering_angle = (1 - pow(ref_alpha_, i))*(ref_steering_angle)*2.0;
-                double net_yaw = initial_yaw + final_steering_angle;
+                Eigen::VectorXd traj(nx_);
+
+                traj(0) = curve->node(i).x;
+                traj(1) = curve->node(i).y;
+
+                traj(2) = (yaw_diff * i)/(2*N_);
+
+                // std::cout << "Yaw angle at index " << i << ": " << traj(2) << "\n";
+
+                ref_trajectory.push_back(traj);
+
+                Eigen::VectorXd input(nu_);
 
                 ref_speed += Ts_*max_acc_;
                 ref_speed = std::min(4.5, ref_speed);
 
-                // ROS_INFO("Speed at i: %d is : %f", i, ref_speed);
-                // ROS_INFO("TS_: %f, max_acc: %f", Ts_, max_acc_);
+                input(0) = ref_speed;
+                input(1) = traj(2)-ego_car_.theta;
 
-                next_x = next_x + ref_speed*(cos(net_yaw))*Ts_;
-                next_y = next_y + ref_speed*(sin(net_yaw))*Ts_;
-
-                Eigen::VectorXd traj(nx_);
-                Eigen::VectorXd input(nu_);
-
-                traj(0) = next_x;
-                traj(1) = next_y;
-                traj(2) = net_yaw;
-
-                // if (current_ego_vel_ < 0.01)
-                // {
-                //     input(0) = 4.5;
-                // }
-                // else
-                // {
-                input(0) = ref_speed; //current_ego_vel_;
-                // }
-                input(1) = final_steering_angle;
-
-                ref_trajectory.push_back(traj);
                 ref_input.push_back(input);
-
             }
 
             visualizeTrajectory(ref_trajectory);
 
             initMPC(ref_trajectory, ref_input);
-            visualizeConstraints();
 
-            publishPPSpeed(best_waypoint);
+//            publishPPSpeed(best_waypoint);
         }
 
         //This method predicts the path of the opponent car and updates the path as obstacles in the map
@@ -922,14 +976,14 @@ class Planner
 
             // if (waypoint_angle < 0) continue; //TODO What to do?
 
-            const size_t waypoint_idx = round((waypoint_angle+1.57)/angle_increment_);
+            const int waypoint_idx = round((waypoint_angle+1.57)/angle_increment_);
 
-            size_t right_idx, left_idx;
+            int right_idx, left_idx;
 
             right_idx = 0;
-            left_idx = scan_hits_.size() -1;
+            left_idx = scan_hits_.size()-1;
 
-            for (size_t i=waypoint_idx; i>0; i--)
+            for (int i=waypoint_idx; i>0; i--)
             {
                 if (scan_hits_[i] <= gap_threshold_)
                 {
@@ -939,7 +993,7 @@ class Planner
                 
             }
 
-            for (size_t i=waypoint_idx; i<scan_hits_.size(); i++)
+            for (int i=waypoint_idx; i<scan_hits_.size(); i++)
             {
                 if (scan_hits_[i] <= gap_threshold_)
                 {
@@ -948,8 +1002,16 @@ class Planner
                 }
             }
 
-            double right_angle = right_idx * angle_increment_ - 1.57;
-            double left_angle = left_idx * angle_increment_ - 1.57;
+            if (left_idx == right_idx)
+            {
+                ROS_INFO("Same indices!");
+            }
+
+            right_idx = right_idx + 15;
+            left_idx = left_idx - 15;
+
+            double right_angle = (right_idx) * angle_increment_ - 1.57;
+            double left_angle = (left_idx) * angle_increment_ - 1.57;
 
             // std::cout << "Angle difference: " << abs(right_angle-left_angle) << "\n";
 
@@ -989,9 +1051,43 @@ class Planner
 
             xp2_ = end_x_base*cos(yaw) - end_y_base*sin(yaw) + translation.x;
             yp2_ = end_x_base*sin(yaw) + end_y_base*cos(yaw) + translation.y;
+
+            // std::cout << (yp2_-yp1_) << "\n";
+            
+            try
+            {
+                tf_left_to_map_ = tf_buffer_.lookupTransform(map_frame_, left_rear_frame_, ros::Time(0));
+            }
+            catch(tf::TransformException& ex)
+            {
+                ROS_ERROR("%s", ex.what());
+                ros::Duration(0.1).sleep();
+            }
+
+            const auto left_translation = tf_left_to_map_.transform.translation;
+
+            xc2_ = left_translation.x;
+            yc2_ = left_translation.y;
+
+            try
+            {
+                tf_right_to_map_ = tf_buffer_.lookupTransform(map_frame_, right_rear_frame_, ros::Time(0));
+            }
+            catch(tf::TransformException& ex)
+            {
+                ROS_ERROR("%s", ex.what());
+                ros::Duration(0.1).sleep();
+            }
+
+            const auto right_translation = tf_right_to_map_.transform.translation;
+
+            xc1_ = right_translation.x;
+            yc1_ = right_translation.y;
+
+            visualizeConstraints();
         }
 
-        std::vector<Waypoint> findOptimalWaypoint()
+        std::vector<Waypoint> findOptimalWaypoint(double& lookahead)
         {
             try
             {
@@ -1029,7 +1125,7 @@ class Planner
                 // if (abs(goal_waypoint.position.y > 1.5)) continue;
 
                 double d = sqrt(pow(goal_waypoint.position.x, 2) + pow(goal_waypoint.position.y, 2));
-                double diff = std::abs(lookahead_d_ - d);
+                double diff = std::abs(lookahead - d);
 
                 if (diff < waypoint_d)
                 {
@@ -1045,7 +1141,7 @@ class Planner
             return optimal_waypoint;
         }
 
-        std::vector<Waypoint> findWaypoints()
+        std::vector<Waypoint> findWaypoints(double& lookahead)
         {
             try
             {
@@ -1083,7 +1179,7 @@ class Planner
                     if (goal_waypoint.position.x < 0) continue;
 
                     double d = sqrt(pow(goal_waypoint.position.x,2) + pow(goal_waypoint.position.y,2));
-                    double diff = std::abs(lookahead_d_ - d);
+                    double diff = std::abs(lookahead - d);
 
                     if (diff < waypoint_d)
                     {
@@ -1451,140 +1547,140 @@ class Planner
             double A11, A12, A21, A22, B11, B22;
             halfSpaceConstraints(A11, A12, A21, A22, B11, B22);
 
-//            for (int i=0; i<N_+1; i++)
-//            {
-//                x_ref = ref_trajectory[i];
-//                u_ref = ref_input[i];
-//                getCarDynamics(Ad, Bd, hd, x_ref, u_ref);
-//
-//                // fill the H_matrix with state cost Q for the first (N+1)*nx
-//                // diagonal and input cost R along the next (N+1)*nu diagonal
-//                if (i > 0)
-//                {
-//                    for (int row=0; row<nx_; row++)
-//                    {
-//                        H_matrix.insert(i*nx_ + row, i*nx_ + row) = Q_(row, row);
-//                    }
-//
-//                    for (int row=0; row<nu_; row++)
-//                    {
-//                        H_matrix.insert(((N_+1)*nx_) + (i*nu_+row), ((N_+1)*nx_) + (i*nu_+row)) = R_(row, row);
-//                    }
-//
-//                    g.segment<nx_>(i*nx_) << -Q_*x_ref;
-//                    g.segment<nu_>(((N_+1)*nx_) + i*nu_) << -R_*u_ref;
-//                }
-//
-//                // fill the constraint matrix first with the dynamic constraint
-//                // x_k+1 = Ad*x_k + Bd*u_k + hd
-//                if (i < N_)
-//                {
-//                    for (int row=0; row<nx_; row++)
-//                    {
-//                        for (int col=0; col<nx_; col++)
-//                        {
-//                            A_c.insert((i+1)*nx_ + row, i*nx_ + col) = Ad(row, col);
-//                        }
-//                    }
-//
-//                    for (int row=0; row<nx_; row++)
-//                    {
-//                        for (int col=0; col<nu_; col++)
-//                        {
-//                            A_c.insert((i+1)*nx_ + row, (N_+1)*nx_ + i*nu_ + col) = Bd(row, col);
-//                        }
-//                    }
-//
-//                    lb.segment<nx_>((i+1)*nx_) = -hd;
-//                    ub.segment<nx_>((i+1)*nx_) = -hd;
-//                }
-//
-//                for (int row=0; row<nx_; row++)
-//                {
-//                    A_c.insert(i*nx_+row, i*nx_+row)  = -1.0;
-//                }
-//
-//                // fill Ax <= B
-//                A_c.insert(((N_+1)*nx_) + 2*i, (i*nx_))= A11;
-//                A_c.insert(((N_+1)*nx_) + 2*i, (i*nx_)+1) = A12;
-//
-//                A_c.insert(((N_+1)*nx_) + 2*i+1, (i*nx_)) = A21;
-//                A_c.insert(((N_+1)*nx_) + 2*i+1, (i*nx_)+1) = A22;
-//
-//                lb(((N_+1)*nx_) + 2*i) = -OsqpEigen::INFTY;
-//                ub(((N_+1)*nx_) + 2*i) = B11;
-//
-//                lb(((N_+1)*nx_) + 2*i+1) = -OsqpEigen::INFTY;
-//                ub(((N_+1)*nx_) + 2*i+1) = B22;
-//
-//                // fill u_min < u < u_max in A_c
-//                for(int row=0; row<nu_; row++)
-//                {
-//                    A_c.insert((N_+1)*nx_+2*(N_+1)+i*nu_+row, (N_+1)*nx_+i*nu_+row) = 1.0;
-//                }
-//
-//                lb((N_+1)*nx_ + 2*(N_+1) + i*nu_) = 0.0;
-//                ub((N_+1)*nx_ + 2*(N_+1) + i*nu_) = max_speed_;
-//
-//                lb((N_+1)*nx_ + 2*(N_+1) + i*nu_ + 1) = -max_steer_;
-//                ub((N_+1)*nx_ + 2*(N_+1) + i*nu_ + 1) = max_steer_;
-//            }
-//
-//            // fill initial condition in lb and ub
-//            lb.head(nx_) = -ref_trajectory[0];
-//            ub.head(nx_) = -ref_trajectory[0];
-//            lb((N_+1)*nx_ + 2*(N_+1)) = 3.5;
-//            ub((N_+1)*nx_ + 2*(N_+1)) = 3.5;
-//
-//            Eigen::SparseMatrix<double> H_matrix_T = H_matrix.transpose();
-//            Eigen::SparseMatrix<double> sparse_I((N_+1)*(nx_+nu_), (N_+1)*(nx_+nu_));
-//            sparse_I.setIdentity();
-//
-//            H_matrix = 0.5*(H_matrix + H_matrix_T) + 0.0000001*sparse_I;
-//
-//            // osqp Eigen solver from https://robotology.github.io/osqp-eigen/doxygen/doc/html/index.html
-//            // instantiate the solver
-//            OsqpEigen::Solver solver;
-//
-//            solver.settings()->setWarmStart(true);
-//            solver.data()->setNumberOfVariables((N_+1)*(nx_+nu_));
-//            solver.data()->setNumberOfConstraints((N_+1)*nx_ + 2*(N_+1) + (N_+1)*nu_);
-//
-//            if(!solver.data()->setHessianMatrix(H_matrix)) throw "failed to set Hessian";
-//            if(!solver.data()->setGradient(g)) throw "failed to set gradient";
-//            if(!solver.data()->setLinearConstraintsMatrix(A_c)) throw "failed to set constraint matrix";
-//            if(!solver.data()->setLowerBound(lb)) throw "failed to set lower bound";
-//            if(!solver.data()->setUpperBound(ub)) throw "failed to set upper bound";
-//
-//            if(!solver.initSolver()) throw "failed to initialize solver";
-//
-//            planner::Inputs mpc_input;
-//            mpc_input.header.stamp = ros::Time::now();
-//            mpc_input.header.frame_id = ego_base_frame_;
-//
-//            if(!solver.solve())
-//            {
-//                mpc_input.feasible = false;
-//                mpc_input_pub_.publish(mpc_input);
-//                return;
-//            }
-//
-//            Eigen::VectorXd QPSolution = solver.getSolution();
-//
-//            visualizeMPC(QPSolution);
-//
-//            const auto start_idx = (N_+1)*nx_;
-//
-//            for (int i=start_idx; i<QPSolution.size(); i+=2)
-//            {
-//                mpc_input.speed.push_back(QPSolution(i));
-//                mpc_input.steering.push_back(QPSolution(i+1));
-//            }
-//            mpc_input.feasible = true;
-//
-//            mpc_input_pub_.publish(mpc_input);
-//
-//            solver.clearSolver();
+            for (int i=0; i<N_+1; i++)
+            {
+                x_ref = ref_trajectory[i];
+                u_ref = ref_input[i];
+                getCarDynamics(Ad, Bd, hd, x_ref, u_ref);
+
+                // fill the H_matrix with state cost Q for the first (N+1)*nx
+                // diagonal and input cost R along the next (N+1)*nu diagonal
+                if (i > 0)
+                {
+                    for (int row=0; row<nx_; row++)
+                    {
+                        H_matrix.insert(i*nx_ + row, i*nx_ + row) = Q_(row, row);
+                    }
+
+                    for (int row=0; row<nu_; row++)
+                    {
+                        H_matrix.insert(((N_+1)*nx_) + (i*nu_+row), ((N_+1)*nx_) + (i*nu_+row)) = R_(row, row);
+                    }
+
+                    g.segment<nx_>(i*nx_) << -Q_*x_ref;
+                    g.segment<nu_>(((N_+1)*nx_) + i*nu_) << -R_*u_ref;
+                }
+
+                // fill the constraint matrix first with the dynamic constraint
+                // x_k+1 = Ad*x_k + Bd*u_k + hd
+                if (i < N_)
+                {
+                    for (int row=0; row<nx_; row++)
+                    {
+                        for (int col=0; col<nx_; col++)
+                        {
+                            A_c.insert((i+1)*nx_ + row, i*nx_ + col) = Ad(row, col);
+                        }
+                    }
+
+                    for (int row=0; row<nx_; row++)
+                    {
+                        for (int col=0; col<nu_; col++)
+                        {
+                            A_c.insert((i+1)*nx_ + row, (N_+1)*nx_ + i*nu_ + col) = Bd(row, col);
+                        }
+                    }
+
+                    lb.segment<nx_>((i+1)*nx_) = -hd;
+                    ub.segment<nx_>((i+1)*nx_) = -hd;
+                }
+
+                for (int row=0; row<nx_; row++)
+                {
+                    A_c.insert(i*nx_+row, i*nx_+row)  = -1.0;
+                }
+
+                // fill Ax <= B
+                A_c.insert(((N_+1)*nx_) + 2*i, (i*nx_))= A11;
+                A_c.insert(((N_+1)*nx_) + 2*i, (i*nx_)+1) = A12;
+
+                A_c.insert(((N_+1)*nx_) + 2*i+1, (i*nx_)) = A21;
+                A_c.insert(((N_+1)*nx_) + 2*i+1, (i*nx_)+1) = A22;
+
+                lb(((N_+1)*nx_) + 2*i) = -OsqpEigen::INFTY;
+                ub(((N_+1)*nx_) + 2*i) = B11;
+
+                lb(((N_+1)*nx_) + 2*i+1) = -OsqpEigen::INFTY;
+                ub(((N_+1)*nx_) + 2*i+1) = B22;
+
+                // fill u_min < u < u_max in A_c
+                for(int row=0; row<nu_; row++)
+                {
+                    A_c.insert((N_+1)*nx_+2*(N_+1)+i*nu_+row, (N_+1)*nx_+i*nu_+row) = 1.0;
+                }
+
+                lb((N_+1)*nx_ + 2*(N_+1) + i*nu_) = 0.0;
+                ub((N_+1)*nx_ + 2*(N_+1) + i*nu_) = max_speed_;
+
+                lb((N_+1)*nx_ + 2*(N_+1) + i*nu_ + 1) = -max_steer_;
+                ub((N_+1)*nx_ + 2*(N_+1) + i*nu_ + 1) = max_steer_;
+            }
+
+            // fill initial condition in lb and ub
+            lb.head(nx_) = -ref_trajectory[0];
+            ub.head(nx_) = -ref_trajectory[0];
+            lb((N_+1)*nx_ + 2*(N_+1)) = 3.5;
+            ub((N_+1)*nx_ + 2*(N_+1)) = 3.5;
+
+            Eigen::SparseMatrix<double> H_matrix_T = H_matrix.transpose();
+            Eigen::SparseMatrix<double> sparse_I((N_+1)*(nx_+nu_), (N_+1)*(nx_+nu_));
+            sparse_I.setIdentity();
+
+            H_matrix = 0.5*(H_matrix + H_matrix_T) + 0.0000001*sparse_I;
+
+            // osqp Eigen solver from https://robotology.github.io/osqp-eigen/doxygen/doc/html/index.html
+            // instantiate the solver
+            OsqpEigen::Solver solver;
+
+            solver.settings()->setWarmStart(true);
+            solver.data()->setNumberOfVariables((N_+1)*(nx_+nu_));
+            solver.data()->setNumberOfConstraints((N_+1)*nx_ + 2*(N_+1) + (N_+1)*nu_);
+
+            if(!solver.data()->setHessianMatrix(H_matrix)) throw "failed to set Hessian";
+            if(!solver.data()->setGradient(g)) throw "failed to set gradient";
+            if(!solver.data()->setLinearConstraintsMatrix(A_c)) throw "failed to set constraint matrix";
+            if(!solver.data()->setLowerBound(lb)) throw "failed to set lower bound";
+            if(!solver.data()->setUpperBound(ub)) throw "failed to set upper bound";
+
+            if(!solver.initSolver()) throw "failed to initialize solver";
+
+            planner::Inputs mpc_input;
+            mpc_input.header.stamp = ros::Time::now();
+            mpc_input.header.frame_id = ego_base_frame_;
+
+            if(!solver.solve())
+            {
+                mpc_input.feasible = false;
+                mpc_input_pub_.publish(mpc_input);
+                return;
+            }
+
+            Eigen::VectorXd QPSolution = solver.getSolution();
+
+            visualizeMPC(QPSolution);
+
+            const auto start_idx = (N_+1)*nx_;
+
+            for (int i=start_idx; i<QPSolution.size(); i+=2)
+            {
+                mpc_input.speed.push_back(QPSolution(i));
+                mpc_input.steering.push_back(QPSolution(i+1));
+            }
+            mpc_input.feasible = true;
+
+            mpc_input_pub_.publish(mpc_input);
+
+            solver.clearSolver();
         }
 
         void getCarDynamics(Eigen::Matrix<double,nx_,nx_>& Ad, Eigen::Matrix<double,nx_,nu_>& Bd, Eigen::Matrix<double,nx_,1>& hd, Eigen::Matrix<double,nx_,1>& state, Eigen::Matrix<double,nu_,1>& input)
@@ -1623,36 +1719,6 @@ class Planner
 
         void halfSpaceConstraints(double& A11, double& A12, double& A21, double& A22, double& B11, double& B12)
         {
-
-            try
-            {
-                tf_left_to_map_ = tf_buffer_.lookupTransform(map_frame_, left_rear_frame_, ros::Time(0));
-            }
-            catch(tf::TransformException& ex)
-            {
-                ROS_ERROR("%s", ex.what());
-                ros::Duration(0.1).sleep();
-            }
-
-            const auto left_translation = tf_left_to_map_.transform.translation;
-
-            xc2_ = left_translation.x;
-            yc2_ = left_translation.y;
-
-            try
-            {
-                tf_right_to_map_ = tf_buffer_.lookupTransform(map_frame_, right_rear_frame_, ros::Time(0));
-            }
-            catch(tf::TransformException& ex)
-            {
-                ROS_ERROR("%s", ex.what());
-                ros::Duration(0.1).sleep();
-            }
-
-            const auto right_translation = tf_right_to_map_.transform.translation;
-
-            xc1_ = right_translation.x;
-            yc1_ = right_translation.y;
 
             A11 = yp1_ - yc1_;
             A12 = xc1_ - xp1_;
@@ -1701,7 +1767,7 @@ class Planner
             borderlines.header.frame_id = "map";
             borderlines.id = rviz_id::BORDERLINES;
             borderlines.ns = "borderlines";
-            borderlines.type = visualization_msgs::Marker::LINE_STRIP;
+            borderlines.type = visualization_msgs::Marker::LINE_LIST;
             borderlines.scale.x = 0.08;
             borderlines.scale.y = 0.08;
             borderlines.action = visualization_msgs::Marker::ADD;
