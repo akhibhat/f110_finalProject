@@ -10,11 +10,11 @@ nx: 3
 nu: 2
 
 #Time Horizon and time-difference for each step
-N: 5
+N: 10
 Ts: 0.05
 
 #input limits
-max_speed: 12.00
+max_speed: 5.00
 max_steer: 0.41
 
 #acceleration limits

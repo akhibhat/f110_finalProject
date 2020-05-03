@@ -96,7 +96,7 @@ class PurePursuit
             drive_pub_ = nh_.advertise<ackermann_msgs::AckermannDriveStamped>("/nav", 100);
             waypoint_viz_pub_ = nh_.advertise<visualization_msgs::Marker>("waypoint_markers", 100);
             pub_markers = nh_.advertise<visualization_msgs::MarkerArray>("/future_pose",100);
-            mpc_viz_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/mpc_path",100);
+            constraints_viz_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/constraints",100);
             mpc_markers = nh_.advertise<visualization_msgs::MarkerArray>("/mpc_markers",100);
             mpc_markers2 = nh_.advertise<visualization_msgs::MarkerArray>("/mpc_markers2",100);
             dubins_viz_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/dubins_path", 100);
@@ -1024,7 +1024,7 @@ class PurePursuit
             mpc_markers.markers.push_back(borderlines);
             // mpc_markers.markers.push_back(traj_ref);
 
-            mpc_viz_pub_.publish(mpc_markers);
+            constraints_viz_pub_.publish(mpc_markers);
         }
 
         void poseCallback(const geometry_msgs::PoseStamped::ConstPtr& pose_msg)
@@ -1100,86 +1100,141 @@ class PurePursuit
             ROS_INFO("constraints_size after initial pose: %d", mpc_constraints_.size());
 
             //linear model weight factor
-            double alpha = 0.02;
+            double alpha = 0.2;
 
-            //container to store the predicted poses of opponent car
-            std::vector<double> x_opp_car_poses;
-            std::vector<double> y_opp_car_poses;
-            std::vector<double> yaw_opp_car_poses;
-            std::vector<double> steer_opp_car_poses;
+            // //container to store the predicted poses of opponent car
+            // std::vector<double> x_opp_car_poses;
+            // std::vector<double> y_opp_car_poses;
+            // std::vector<double> yaw_opp_car_poses;
+            // std::vector<double> steer_opp_car_poses;
 
-            //store the current obtained pose as the first pose
-            x_opp_car_poses.push_back(current_pose.x);
-            y_opp_car_poses.push_back(current_pose.y);
-            yaw_opp_car_poses.push_back(current_pose.heading);
-            steer_opp_car_poses.push_back(0.0);
+            // //store the current obtained pose as the first pose
+            // x_opp_car_poses.push_back(current_pose.x);
+            // y_opp_car_poses.push_back(current_pose.y);
+            // yaw_opp_car_poses.push_back(current_pose.heading);
+            // steer_opp_car_poses.push_back(0.0);
 
-            double last_x_opp_car = current_pose.x;
-            double last_y_opp_car = current_pose.y;
-
-            double next_x_opp = current_pose.x;
-            double next_y_opp = current_pose.y;
-            double initial_heading = current_pose.heading; //the current yaw of the odom. Should be zero?
+            // double next_x_opp = current_pose.x;
+            // double next_y_opp = current_pose.y;
+            // double initial_heading = current_pose.heading; //the current yaw of the odom. Should be zero?
 
             // // ROS_INFO("Current heading: %f", steering_angle);
 
             // // double opp_vel = current_pose.speed;
-            double opp_vel = 2.5;
+            double current_ego_vel_ = 2.5;
             // // ROS_INFO("%f",opp_vel);
 
             const double pp_steering_angle = PPAngle(best_waypoint);
-            // ROS_INFO()
-            
+            ROS_INFO("pp_steering_angle is: %f", pp_steering_angle);
 
-            for(int i=0; i<=N_; i++)
-            {
-
-                double final_steering_angle = (1 - pow(alpha, i))*(pp_steering_angle)*2.0;
-                steer_opp_car_poses.push_back(final_steering_angle); 
-                double net_heading = initial_heading + final_steering_angle;
-                yaw_opp_car_poses.push_back(net_heading);
-                // ROS_INFO("pp_steering_angle: %f iteration i = %d", steering_angle, i);
-
-                next_x_opp = next_x_opp + opp_vel*(cos(net_heading))*Ts_;
-                next_y_opp = next_y_opp + opp_vel*(sin(net_heading))*Ts_;
-
-                auto current_pose = Waypoint();
-                current_pose.x = next_x_opp;
-                current_pose.y = next_y_opp;
-                current_pose.heading = net_heading;
-
-
-                x_opp_car_poses.push_back(next_x_opp);
-                y_opp_car_poses.push_back(next_y_opp);
-            }
-
-            // PublishMarkers(x_opp_car_poses, y_opp_car_poses);
+           double next_x = ego_car_.x;
+           double next_y = ego_car_.y;
+           double initial_yaw = ego_car_.theta;
 
            std::vector<Eigen::VectorXd> ref_trajectory;
            std::vector<Eigen::VectorXd> ref_input;
+//
+           double ref_speed = current_ego_vel_;
 
-           for(int i = 0; i < x_opp_car_poses.size(); i++)
+           Eigen::VectorXd traj(nx_);
+           Eigen::VectorXd input(nu_);
+
+           traj(0) = next_x;
+           traj(1) = next_y;
+           traj(2) = initial_yaw;
+
+           if (ref_speed < 0.1){ ref_speed = 2.5;}
+           input(0) = ref_speed; //current_ego_vel_;
+           input(1) = 0.0;
+
+           ref_trajectory.push_back(traj);
+           ref_input.push_back(input);
+
+           for (int i=0; i<N_; i++)
            {
-               Eigen::VectorXd traj(nx_);
+               // double final_steering_angle = (1 - pow(alpha, i))*(pp_steering_angle)*1.0;
+               double final_steering_angle = (pp_steering_angle)*pow((1 - alpha), i);//*((1*pow(alpha, i+1)));
+               ROS_INFO("steering angle: %f, %f * %d", final_steering_angle, pp_steering_angle, pow((1 - alpha), i));
+               ref_speed += Ts_*9.51;
+               ref_speed = std::min(4.5, ref_speed);
+               // ROS_INFO("Speed at i: %d is : %f", i, ref_speed);
+
                Eigen::VectorXd input(nu_);
+               input(0) = ref_speed; //current_ego_vel_;
+               input(1) = final_steering_angle;
 
-               traj(0) = x_opp_car_poses[i];
-               traj(1) = y_opp_car_poses[i];
-               traj(2) = yaw_opp_car_poses[i];
+               Eigen::VectorXd next_state(nx_);
+               ROS_INFO("Input at stage: %d is : %f, %f", i, input(0), input(1));
+               ROS_INFO("state at stage: %d is : %f, %f, %f \n", i, traj(0), traj(1), traj(2));
+               PropagateDynamics(traj, input, next_state, Ts_);
 
-               input(0) = opp_vel;
-               input(1) = steer_opp_car_poses[i];
+               // Eigen::VectorXd traj(nx_);
+               traj = next_state;
 
                ref_trajectory.push_back(traj);
                ref_input.push_back(input);
+
+           }
+            
+
+           //  for(int i=0; i<=N_; i++)
+           //  {
+
+           //      double final_steering_angle = (1 - pow(alpha, i))*(pp_steering_angle)*2.0;
+           //      steer_opp_car_poses.push_back(final_steering_angle); 
+           //      double net_heading = initial_heading + final_steering_angle;
+           //      yaw_opp_car_poses.push_back(net_heading);
+           //      // ROS_INFO("pp_steering_angle: %f iteration i = %d", steering_angle, i);
+
+           //      next_x_opp = next_x_opp + opp_vel*(cos(net_heading))*Ts_;
+           //      next_y_opp = next_y_opp + opp_vel*(sin(net_heading))*Ts_;
+
+           //      auto current_pose = Waypoint();
+           //      current_pose.x = next_x_opp;
+           //      current_pose.y = next_y_opp;
+           //      current_pose.heading = net_heading;
+
+
+           //      x_opp_car_poses.push_back(next_x_opp);
+           //      y_opp_car_poses.push_back(next_y_opp);
+           //  }
+
+           //  // PublishMarkers(x_opp_car_poses, y_opp_car_poses);
+
+           // std::vector<Eigen::VectorXd> ref_trajectory;
+           // std::vector<Eigen::VectorXd> ref_input;
+
+           // for(int i = 0; i < x_opp_car_poses.size(); i++)
+           // {
+           //     Eigen::VectorXd traj(nx_);
+           //     Eigen::VectorXd input(nu_);
+
+           //     traj(0) = x_opp_car_poses[i];
+           //     traj(1) = y_opp_car_poses[i];
+           //     traj(2) = yaw_opp_car_poses[i];
+
+           //     input(0) = opp_vel;
+           //     input(1) = steer_opp_car_poses[i];
+
+           //     ref_trajectory.push_back(traj);
+           //     ref_input.push_back(input);
                
-            }
+           //  }
            ROS_INFO("Exited reference loading!");
 
            visualizeDubins(ref_trajectory);
            // ROS_INFO("Done with Dubin's path, size: %d", ref_trajectory.size());
-           initMPC(ref_trajectory, ref_input, opp_vel);
+           initMPC(ref_trajectory, ref_input, ref_speed);
 
+        }
+
+        void PropagateDynamics(Eigen::VectorXd& state, Eigen::VectorXd& input, Eigen::VectorXd& next_state, double dt)
+        {
+            Eigen::VectorXd dynamics(state.size());
+            dynamics(0) = input(0)*cos(state(2));
+            dynamics(1) = input(0)*sin(state(2));
+            dynamics(2) = tan(input(1))*input(0)/C_l_;
+            next_state = state + dynamics * dt;
         }
 
         void visualizeDubins(std::vector<Eigen::VectorXd>& ref_traj)
@@ -1226,7 +1281,7 @@ class PurePursuit
         ros::Publisher mpc_markers;
         ros::Publisher mpc_markers2;
         ros::Subscriber scan_sub_;
-        ros::Publisher mpc_viz_pub_;
+        ros::Publisher constraints_viz_pub_;
         ros::Publisher dubins_viz_pub_;
 
         //state variables
