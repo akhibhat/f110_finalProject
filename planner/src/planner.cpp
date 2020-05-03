@@ -436,6 +436,8 @@ class Planner
            ref_input.push_back(input);
 //
            // ROS_INFO("Initial Speed: %f", ref_speed);
+           //
+           if (ref_speed < 0.1){ ref_speed = 3.5; }
 
            for (int i=0; i<N_; i++)
            {
@@ -464,7 +466,6 @@ class Planner
 
                ref_trajectory.push_back(traj);
                ref_input.push_back(input);
-
            }
 
             // Curve* curve = new Bezier();
@@ -476,7 +477,7 @@ class Planner
             
             // for (int i=0; i<3; i++)
             // {
-            //     std::vector<Waypoint> waypoints;
+            //     std::vector<Waypoint> waypoints;u
             //     double lookahead = i + 1.0;
             //     waypoints = findWaypoints(lookahead);
             //     std::vector<Waypoint> opt = findOptimalWaypoint(lookahead);
@@ -1641,140 +1642,140 @@ class Planner
             double A11, A12, A21, A22, B11, B22;
             halfSpaceConstraints(A11, A12, A21, A22, B11, B22);
 
-           for (int i=0; i<N_+1; i++)
-           {
-               x_ref = ref_trajectory[i];
-               u_ref = ref_input[i];
-               getCarDynamics(Ad, Bd, hd, x_ref, u_ref);
-
-               // fill the H_matrix with state cost Q for the first (N+1)*nx
-               // diagonal and input cost R along the next (N+1)*nu diagonal
-               if (i > 0)
-               {
-                   for (int row=0; row<nx_; row++)
-                   {
-                       H_matrix.insert(i*nx_ + row, i*nx_ + row) = Q_(row, row);
-                   }
-
-                   for (int row=0; row<nu_; row++)
-                   {
-                       H_matrix.insert(((N_+1)*nx_) + (i*nu_+row), ((N_+1)*nx_) + (i*nu_+row)) = R_(row, row);
-                   }
-
-                   g.segment<nx_>(i*nx_) << -Q_*x_ref;
-                   g.segment<nu_>(((N_+1)*nx_) + i*nu_) << -R_*u_ref;
-               }
-
-               // fill the constraint matrix first with the dynamic constraint
-               // x_k+1 = Ad*x_k + Bd*u_k + hd
-               if (i < N_)
-               {
-                   for (int row=0; row<nx_; row++)
-                   {
-                       for (int col=0; col<nx_; col++)
-                       {
-                           A_c.insert((i+1)*nx_ + row, i*nx_ + col) = Ad(row, col);
-                       }
-                   }
-
-                   for (int row=0; row<nx_; row++)
-                   {
-                       for (int col=0; col<nu_; col++)
-                       {
-                           A_c.insert((i+1)*nx_ + row, (N_+1)*nx_ + i*nu_ + col) = Bd(row, col);
-                       }
-                   }
-
-                   lb.segment<nx_>((i+1)*nx_) = -hd;
-                   ub.segment<nx_>((i+1)*nx_) = -hd;
-               }
-
-               for (int row=0; row<nx_; row++)
-               {
-                   A_c.insert(i*nx_+row, i*nx_+row)  = -1.0;
-               }
-
-               // fill Ax <= B
-               A_c.insert(((N_+1)*nx_) + 2*i, (i*nx_))= A11;
-               A_c.insert(((N_+1)*nx_) + 2*i, (i*nx_)+1) = A12;
-
-               A_c.insert(((N_+1)*nx_) + 2*i+1, (i*nx_)) = A21;
-               A_c.insert(((N_+1)*nx_) + 2*i+1, (i*nx_)+1) = A22;
-
-               lb(((N_+1)*nx_) + 2*i) = -OsqpEigen::INFTY;
-               ub(((N_+1)*nx_) + 2*i) = B11;
-
-               lb(((N_+1)*nx_) + 2*i+1) = -OsqpEigen::INFTY;
-               ub(((N_+1)*nx_) + 2*i+1) = B22;
-
-               // fill u_min < u < u_max in A_c
-               for(int row=0; row<nu_; row++)
-               {
-                   A_c.insert((N_+1)*nx_+2*(N_+1)+i*nu_+row, (N_+1)*nx_+i*nu_+row) = 1.0;
-               }
-
-               lb((N_+1)*nx_ + 2*(N_+1) + i*nu_) = 0.0;
-               ub((N_+1)*nx_ + 2*(N_+1) + i*nu_) = max_speed_;
-
-               lb((N_+1)*nx_ + 2*(N_+1) + i*nu_ + 1) = -max_steer_;
-               ub((N_+1)*nx_ + 2*(N_+1) + i*nu_ + 1) = max_steer_;
-           }
-
-           // fill initial condition in lb and ub
-           lb.head(nx_) = -ref_trajectory[0];
-           ub.head(nx_) = -ref_trajectory[0];
-           lb((N_+1)*nx_ + 2*(N_+1)) = 3.5;
-           ub((N_+1)*nx_ + 2*(N_+1)) = 3.5;
-
-           Eigen::SparseMatrix<double> H_matrix_T = H_matrix.transpose();
-           Eigen::SparseMatrix<double> sparse_I((N_+1)*(nx_+nu_), (N_+1)*(nx_+nu_));
-           sparse_I.setIdentity();
-
-           H_matrix = 0.5*(H_matrix + H_matrix_T) + 0.0000001*sparse_I;
-
-           // osqp Eigen solver from https://robotology.github.io/osqp-eigen/doxygen/doc/html/index.html
-           // instantiate the solver
-           OsqpEigen::Solver solver;
-
-           solver.settings()->setWarmStart(true);
-           solver.data()->setNumberOfVariables((N_+1)*(nx_+nu_));
-           solver.data()->setNumberOfConstraints((N_+1)*nx_ + 2*(N_+1) + (N_+1)*nu_);
-
-           if(!solver.data()->setHessianMatrix(H_matrix)) throw "failed to set Hessian";
-           if(!solver.data()->setGradient(g)) throw "failed to set gradient";
-           if(!solver.data()->setLinearConstraintsMatrix(A_c)) throw "failed to set constraint matrix";
-           if(!solver.data()->setLowerBound(lb)) throw "failed to set lower bound";
-           if(!solver.data()->setUpperBound(ub)) throw "failed to set upper bound";
-
-           if(!solver.initSolver()) throw "failed to initialize solver";
-
-           planner::Inputs mpc_input;
-           mpc_input.header.stamp = ros::Time::now();
-           mpc_input.header.frame_id = ego_base_frame_;
-
-           if(!solver.solve())
-           {
-               mpc_input.feasible = false;
-               mpc_input_pub_.publish(mpc_input);
-               return;
-           }
-
-           Eigen::VectorXd QPSolution = solver.getSolution();
-
-           visualizeMPC(QPSolution);
-
-           const auto start_idx = (N_+1)*nx_;
-
-           for (int i=start_idx; i<QPSolution.size(); i+=2)
-           {
-               mpc_input.speed.push_back(QPSolution(i));
-               mpc_input.steering.push_back(QPSolution(i+1));
-           }
-           mpc_input.feasible = true;
-
-           mpc_input_pub_.publish(mpc_input);
-
-           solver.clearSolver();
+            for (int i=0; i<N_+1; i++)
+            {
+                x_ref = ref_trajectory[i];
+                u_ref = ref_input[i];
+                getCarDynamics(Ad, Bd, hd, x_ref, u_ref);
+ 
+                // fill the H_matrix with state cost Q for the first (N+1)*nx
+                // diagonal and input cost R along the next (N+1)*nu diagonal
+                if (i > 0)
+                {
+                    for (int row=0; row<nx_; row++)
+                    {
+                        H_matrix.insert(i*nx_ + row, i*nx_ + row) = Q_(row, row);
+                    }
+ 
+                    for (int row=0; row<nu_; row++)
+                    {
+                        H_matrix.insert(((N_+1)*nx_) + (i*nu_+row), ((N_+1)*nx_) + (i*nu_+row)) = R_(row, row);
+                    }
+ 
+                    g.segment<nx_>(i*nx_) << -Q_*x_ref;
+                    g.segment<nu_>(((N_+1)*nx_) + i*nu_) << -R_*u_ref;
+                }
+ 
+                // fill the constraint matrix first with the dynamic constraint
+                // x_k+1 = Ad*x_k + Bd*u_k + hd
+                if (i < N_)
+                {
+                    for (int row=0; row<nx_; row++)
+                    {
+                        for (int col=0; col<nx_; col++)
+                        {
+                            A_c.insert((i+1)*nx_ + row, i*nx_ + col) = Ad(row, col);
+                        }
+                    }
+ 
+                    for (int row=0; row<nx_; row++)
+                    {
+                        for (int col=0; col<nu_; col++)
+                        {
+                            A_c.insert((i+1)*nx_ + row, (N_+1)*nx_ + i*nu_ + col) = Bd(row, col);
+                        }
+                    }
+ 
+                    lb.segment<nx_>((i+1)*nx_) = -hd;
+                    ub.segment<nx_>((i+1)*nx_) = -hd;
+                }
+ 
+                for (int row=0; row<nx_; row++)
+                {
+                    A_c.insert(i*nx_+row, i*nx_+row)  = -1.0;
+                }
+ 
+                // fill Ax <= B
+                A_c.insert(((N_+1)*nx_) + 2*i, (i*nx_))= A11;
+                A_c.insert(((N_+1)*nx_) + 2*i, (i*nx_)+1) = A12;
+ 
+                A_c.insert(((N_+1)*nx_) + 2*i+1, (i*nx_)) = A21;
+                A_c.insert(((N_+1)*nx_) + 2*i+1, (i*nx_)+1) = A22;
+ 
+                lb(((N_+1)*nx_) + 2*i) = -OsqpEigen::INFTY;
+                ub(((N_+1)*nx_) + 2*i) = B11;
+ 
+                lb(((N_+1)*nx_) + 2*i+1) = -OsqpEigen::INFTY;
+                ub(((N_+1)*nx_) + 2*i+1) = B22;
+ 
+                // fill u_min < u < u_max in A_c
+                for(int row=0; row<nu_; row++)
+                {
+                    A_c.insert((N_+1)*nx_+2*(N_+1)+i*nu_+row, (N_+1)*nx_+i*nu_+row) = 1.0;
+                }
+ 
+                lb((N_+1)*nx_ + 2*(N_+1) + i*nu_) = 0.0;
+                ub((N_+1)*nx_ + 2*(N_+1) + i*nu_) = max_speed_;
+ 
+                lb((N_+1)*nx_ + 2*(N_+1) + i*nu_ + 1) = -max_steer_;
+                ub((N_+1)*nx_ + 2*(N_+1) + i*nu_ + 1) = max_steer_;
+            }
+ 
+            // fill initial condition in lb and ub
+            lb.head(nx_) = -ref_trajectory[0];
+            ub.head(nx_) = -ref_trajectory[0];
+            lb((N_+1)*nx_ + 2*(N_+1)) = 4.5;
+            ub((N_+1)*nx_ + 2*(N_+1)) = 4.5;
+ 
+            Eigen::SparseMatrix<double> H_matrix_T = H_matrix.transpose();
+            Eigen::SparseMatrix<double> sparse_I((N_+1)*(nx_+nu_), (N_+1)*(nx_+nu_));
+            sparse_I.setIdentity();
+ 
+            H_matrix = 0.5*(H_matrix + H_matrix_T) + 0.0000001*sparse_I;
+ 
+            // osqp Eigen solver from https://robotology.github.io/osqp-eigen/doxygen/doc/html/index.html
+            // instantiate the solver
+            OsqpEigen::Solver solver;
+ 
+            solver.settings()->setWarmStart(true);
+            solver.data()->setNumberOfVariables((N_+1)*(nx_+nu_));
+            solver.data()->setNumberOfConstraints((N_+1)*nx_ + 2*(N_+1) + (N_+1)*nu_);
+ 
+            if(!solver.data()->setHessianMatrix(H_matrix)) throw "failed to set Hessian";
+            if(!solver.data()->setGradient(g)) throw "failed to set gradient";
+            if(!solver.data()->setLinearConstraintsMatrix(A_c)) throw "failed to set constraint matrix";
+            if(!solver.data()->setLowerBound(lb)) throw "failed to set lower bound";
+            if(!solver.data()->setUpperBound(ub)) throw "failed to set upper bound";
+ 
+            if(!solver.initSolver()) throw "failed to initialize solver";
+ 
+            planner::Inputs mpc_input;
+            mpc_input.header.stamp = ros::Time::now();
+            mpc_input.header.frame_id = ego_base_frame_;
+ 
+            if(!solver.solve())
+            {
+                mpc_input.feasible = false;
+                mpc_input_pub_.publish(mpc_input);
+                return;
+            }
+ 
+            Eigen::VectorXd QPSolution = solver.getSolution();
+ 
+            visualizeMPC(QPSolution);
+ 
+            const auto start_idx = (N_+1)*nx_;
+ 
+            for (int i=start_idx; i<QPSolution.size(); i+=2)
+            {
+                mpc_input.speed.push_back(QPSolution(i));
+                mpc_input.steering.push_back(QPSolution(i+1));
+            }
+            mpc_input.feasible = true;
+ 
+            mpc_input_pub_.publish(mpc_input);
+ 
+            solver.clearSolver();
 
         //     for (int i=0; i<N_+1; i++)
         //     {
@@ -1910,7 +1911,7 @@ class Planner
         //     mpc_input_pub_.publish(mpc_input);
 
         //     solver.clearSolver();
-         }
+        }
 
         void getCarDynamics(Eigen::Matrix<double,nx_,nx_>& Ad, Eigen::Matrix<double,nx_,nu_>& Bd, Eigen::Matrix<double,nx_,1>& hd, Eigen::Matrix<double,nx_,1>& state, Eigen::Matrix<double,nu_,1>& input)
         {
