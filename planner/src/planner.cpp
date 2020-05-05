@@ -388,16 +388,26 @@ class Planner
 
             std::vector<Waypoint> waypoint_options;
 
-            waypoint_options = findWaypoints(lookahead_d_);
+            bool collision_check = true;
+            waypoint_options = findWaypoints(lookahead_d_, collision_check);
             std::vector<Waypoint> optimal;
-            optimal = findOptimalWaypoint(lookahead_d_);
+            optimal = findOptimalWaypoint(lookahead_d_, collision_check);
             waypoint_options.push_back(optimal[0]);
             
             auto best_waypoint = checkFeasibility(waypoint_options);
 
             if (waypoint_options.size() < 5)
-            {
-                ROS_INFO("LESS WAYPOINTS RECEIVED!! Size: %d", waypoint_options.size());
+            {   
+                bool collision_check = false;
+                // ROS_INFO("LESS WAYPOINTS RECEIVED!! Size: %d", waypoint_options.size());
+                waypoint_options.clear();
+                waypoint_options = findWaypoints(lookahead_d_, collision_check);
+                std::vector<Waypoint> optimal;
+                optimal = findOptimalWaypoint(lookahead_d_, collision_check);
+                waypoint_options.push_back(optimal[0]);
+                auto best_waypoint = checkFeasibility(waypoint_options);
+                // ROS_INFO("After 2nd round: Size: %d", waypoint_options.size());
+                // {ROS_INFO("best waypoint: %f, %f", best_waypoint.x, best_waypoint.y);}
             }
 
             add_waypoint_viz(best_waypoint, map_frame_,0.0,1.0,0.0,1.0,0.2,0.2,0.2);
@@ -411,13 +421,14 @@ class Planner
 
             //REFERENCE TRAJECTORY USING PURE PURSUIT
            const double ref_steering_angle = ReferencePPAngle(best_waypoint);
+           if (!collision_check){ROS_INFO("ref_steering_angle is: %f", ref_steering_angle);}
 
            double next_x = ego_car_.x;
            double next_y = ego_car_.y;
            double initial_yaw = ego_car_.theta;
 
-            std::vector<Eigen::VectorXd> ref_trajectory;
-            std::vector<Eigen::VectorXd> ref_input;
+           std::vector<Eigen::VectorXd> ref_trajectory;
+           std::vector<Eigen::VectorXd> ref_input;
 //
            double ref_speed = current_ego_vel_;
 
@@ -428,7 +439,7 @@ class Planner
            traj(1) = next_y;
            traj(2) = initial_yaw;
 
-
+           if (ref_speed < 0.1){ ref_speed = 3.5;}
            input(0) = ref_speed; //current_ego_vel_;
            input(1) = 0.0;
 
@@ -441,101 +452,36 @@ class Planner
 
            for (int i=0; i<N_; i++)
            {
-               double final_steering_angle = (1 - pow(ref_alpha_, i))*(ref_steering_angle)*2.0;
-               double net_yaw = initial_yaw + final_steering_angle;
+               // double final_steering_angle = (1 - pow(ref_alpha_, i))*(ref_steering_angle)*2.0;
+               double val = (1 - ref_alpha_);
+               double final_steering_angle = 1.5*(ref_steering_angle)*pow(val, i);
+               // ROS_INFO("at i = %d, steering angle: %f, %f * %f", i, final_steering_angle, ref_steering_angle, pow(val, i));
 
                ref_speed += Ts_*max_acc_;
                ref_speed = std::min(4.5, ref_speed);
-
                // ROS_INFO("Speed at i: %d is : %f", i, ref_speed);
-               // ROS_INFO("TS_: %f, max_acc: %f", Ts_, max_acc_);
 
-               next_x = next_x + ref_speed*(cos(net_yaw))*Ts_;
-               next_y = next_y + ref_speed*(sin(net_yaw))*Ts_;
-
-               Eigen::VectorXd traj(nx_);
                Eigen::VectorXd input(nu_);
-
-               traj(0) = next_x;
-               traj(1) = next_y;
-               traj(2) = net_yaw;
-
                input(0) = ref_speed; //current_ego_vel_;
-
                input(1) = final_steering_angle;
+
+               Eigen::VectorXd next_state(nx_);
+               // ROS_INFO("Input at stage: %d is : %f, %f", i, input(0), input(1));
+               // ROS_INFO("state at stage: %d is : %f, %f, %f \n", i, traj(0), traj(1), traj(2));
+               PropagateDynamics(traj, input, next_state, Ts_);
+
+               traj = next_state;
 
                ref_trajectory.push_back(traj);
                ref_input.push_back(input);
            }
 
-            // Curve* curve = new Bezier();
-            // curve->set_steps(2*N_);
-
-            // curve->add_way_point(Vector(ego_car_.x, ego_car_.y, ego_car_.theta));
-
-            // Waypoint final_waypoint;
-            
-            // for (int i=0; i<3; i++)
-            // {
-            //     std::vector<Waypoint> waypoints;u
-            //     double lookahead = i + 1.0;
-            //     waypoints = findWaypoints(lookahead);
-            //     std::vector<Waypoint> opt = findOptimalWaypoint(lookahead);
-            //     waypoints.push_back(opt[0]);
-
-            //     auto waypoint_b = checkFeasibility(waypoints);
-
-            //     if (i==2)
-            //     {
-            //         final_waypoint = waypoint_b;
-            //     }
-
-            //     curve->add_way_point(Vector(waypoint_b.x, waypoint_b.y, 0));
-            // }
-
-            // double yaw_diff = final_waypoint.heading - ego_car_.theta;
-
-            // double initial_heading = ego_car_.theta;
-
-            // auto ref_steering = ReferencePPAngle(final_waypoint);
-            // double ref_speed = current_ego_vel_;
-
-            // for (int i=0; i<2*N_; i++)
-            // {   
-            //     double final_steering_angle = (1 - pow(ref_alpha_, i))*(ref_steering)*2.0;
-            //     double net_heading = initial_heading + final_steering_angle;
-
-            //     Eigen::VectorXd traj(nx_);
-
-            //     traj(0) = curve->node(i).x;
-            //     traj(1) = curve->node(i).y;
-
-            //     traj(2) = net_heading;//(yaw_diff * i)/(2*N_);
-
-            //     // std::cout << "Yaw angle at index " << i << ": " << traj(2) << "\n";
-
-            //     ref_trajectory.push_back(traj);
-
-            //     Eigen::VectorXd input(nu_);
-
-            //     ref_speed += Ts_*max_acc_;
-            //     ref_speed = std::min(4.5, ref_speed);
-
-
-            //     input(0) = ref_speed;
-            //     input(1) = final_steering_angle;
-            //     // ROS_INFO("yaw_diff: %f, C_l_: %f, ref_speed: %f", yaw_diff, C_l_, ref_speed);
-            //     // ROS_INFO("Angle at i: %d is %f and tan argument is %f", i, input(1), (yaw_diff));
-
-            //     ref_input.push_back(input);
-            // }
-
             visualizeTrajectory(ref_trajectory);
 
 
-            initMPC(ref_trajectory, ref_input);
+            initMPC(ref_trajectory, ref_input, ref_speed);
 
-//            publishPPSpeed(best_waypoint);
+           // publishPPSpeed(best_waypoint);
         }
 
         //This method predicts the path of the opponent car and updates the path as obstacles in the map
@@ -612,6 +558,15 @@ class Planner
                     }
                 }
             }
+        }
+
+        void PropagateDynamics(Eigen::VectorXd& state, Eigen::VectorXd& input, Eigen::VectorXd& next_state, double dt)
+        {
+            Eigen::VectorXd dynamics(state.size());
+            dynamics(0) = input(0)*cos(state(2));
+            dynamics(1) = input(0)*sin(state(2));
+            dynamics(2) = tan(input(1))*input(0)/C_l_;
+            next_state = state + dynamics * dt;
         }
 
         void PublishPredictionMarkers(const std::vector<double>& x_poses_ego_vehicle, const std::vector<double>& y_poses_ego_vehicle)
@@ -1014,7 +969,7 @@ class Planner
             {
                 if (scan_hits_[i] <= gap_threshold_)
                 {
-                    right_idx = i + 40;
+                    right_idx = i + 20;
                     if (right_idx > waypoint_idx)
                     {
                         right_idx = waypoint_idx;
@@ -1028,7 +983,7 @@ class Planner
             {
                 if (scan_hits_[i] <= gap_threshold_)
                 {
-                    left_idx = i - 40;
+                    left_idx = i - 20;
                     if (left_idx < waypoint_idx)
                     {
                         left_idx = waypoint_idx;
@@ -1119,8 +1074,10 @@ class Planner
             visualizeConstraints();
         }
 
-        std::vector<Waypoint> findOptimalWaypoint(double& lookahead)
-        {
+        std::vector<Waypoint> findOptimalWaypoint(double& lookahead, bool collision_check)
+        {   
+            
+            // if (!collision_check) {ROS_INFO("In optimal: skipping check");}
             try
             {
                 tf_map_to_laser_ = tf_buffer_.lookupTransform(ego_laser_frame_, map_frame_, ros::Time(0));
@@ -1138,8 +1095,12 @@ class Planner
 
             for (int i=0; i<global_path_.size(); i++)
             {
-                    
-                if (checkCollision(global_path_[i])) continue;
+                if (collision_check)
+                {
+                    if (checkCollision(global_path_[i])) continue;
+                }
+                // else {ROS_INFO("In optimal: skipping check");}   
+                // if (checkCollision(global_path_[i])) continue;
                 
                 geometry_msgs::Pose goal_waypoint;
                 goal_waypoint.position.x = global_path_[i].x;
@@ -1168,6 +1129,7 @@ class Planner
                 }
             }
 
+            // if (!collision_check){ROS_INFO("values in optimal: %f, %f, %d", global_path_[waypoint_idx].x, global_path_[waypoint_idx].y, waypoint_idx);}
             optimal_waypoint.push_back(global_path_[waypoint_idx]);
 
             return optimal_waypoint;
@@ -1175,9 +1137,11 @@ class Planner
 
 
 
-        std::vector<Waypoint> findWaypoints(double& lookahead)
+        std::vector<Waypoint> findWaypoints(double& lookahead, bool collision_check)
         {
             bool change = false;
+
+            // if (!collision_check){ROS_INFO("In optional: skipping check");}
             try
             {
                 tf_map_to_laser_ = tf_buffer_.lookupTransform(ego_laser_frame_, map_frame_, ros::Time(0));
@@ -1197,8 +1161,13 @@ class Planner
 
                 for (int j=0; j<trajectory_options_[i].size(); j++)
                 {
+                    if (collision_check)
+                    {   
 
-                    if (checkCollision(trajectory_options_[i][j])) continue;
+                        if (checkCollision(trajectory_options_[i][j])) continue;
+                    }
+                    // else {ROS_INFO("In optional: skipping check");}
+                    // if (checkCollision(trajectory_options_[i][j])) continue;
 
                     geometry_msgs::Pose goal_waypoint;
                     goal_waypoint.position.x = trajectory_options_[i][j].x;
@@ -1230,8 +1199,9 @@ class Planner
             }
 
             if (change != true)
-            {
-                ROS_INFO("In findWaypoints, NO WAYPOINT FOUND");
+            {   
+                waypoints.clear();
+                // ROS_INFO("In findWaypoints, NO WAYPOINT FOUND, size: %d", waypoints.size());
             }
 
             return waypoints;
@@ -1287,9 +1257,9 @@ class Planner
                 too_close_ = false;
             }
 
-            if (dist > gap_bubble_)
+            if (dist > 2.0)
             {
-                if (abs(opt_steering)<0.80)
+                if (abs(opt_steering)<1.30)
                 {
                     best_waypoint = waypoint_options[path_num_];
                     best_gaps_.clear();
@@ -1587,8 +1557,8 @@ class Planner
 
             if (!too_close_)
             {
-                HIGH_SPEED = 4.5;
-                MID_SPEED = 4.5;
+                HIGH_SPEED = 3.5;
+                MID_SPEED = 3.5;
                 LOW_SPEED = 3.5;
             }
             else
@@ -1615,7 +1585,7 @@ class Planner
             drive_pub_.publish(drive_msg);
         }
 
-        void initMPC(std::vector<Eigen::VectorXd>& ref_trajectory, std::vector<Eigen::VectorXd>& ref_input)
+        void initMPC(std::vector<Eigen::VectorXd>& ref_trajectory, std::vector<Eigen::VectorXd>& ref_input, double current_ego_vel_)
         {
             // define the Hessian and Constraint matrix
             Eigen::SparseMatrix<double> H_matrix((N_+1)*(nx_+nu_), (N_+1)*(nx_+nu_));
@@ -1724,8 +1694,8 @@ class Planner
             // fill initial condition in lb and ub
             lb.head(nx_) = -ref_trajectory[0];
             ub.head(nx_) = -ref_trajectory[0];
-            lb((N_+1)*nx_ + 2*(N_+1)) = 4.5;
-            ub((N_+1)*nx_ + 2*(N_+1)) = 4.5;
+            lb((N_+1)*nx_ + 2*(N_+1)) = current_ego_vel_;
+            ub((N_+1)*nx_ + 2*(N_+1)) = current_ego_vel_;
  
             Eigen::SparseMatrix<double> H_matrix_T = H_matrix.transpose();
             Eigen::SparseMatrix<double> sparse_I((N_+1)*(nx_+nu_), (N_+1)*(nx_+nu_));
@@ -1776,141 +1746,6 @@ class Planner
             mpc_input_pub_.publish(mpc_input);
  
             solver.clearSolver();
-
-        //     for (int i=0; i<N_+1; i++)
-        //     {
-        //         x_ref = ref_trajectory[i];
-        //         u_ref = ref_input[i];
-        //         getCarDynamics(Ad, Bd, hd, x_ref, u_ref);
-
-        //         // fill the H_matrix with state cost Q for the first (N+1)*nx
-        //         // diagonal and input cost R along the next (N+1)*nu diagonal
-        //         if (i > 0)
-        //         {
-        //             for (int row=0; row<nx_; row++)
-        //             {
-        //                 H_matrix.insert(i*nx_ + row, i*nx_ + row) = Q_(row, row);
-        //             }
-
-        //             for (int row=0; row<nu_; row++)
-        //             {
-        //                 H_matrix.insert(((N_+1)*nx_) + (i*nu_+row), ((N_+1)*nx_) + (i*nu_+row)) = R_(row, row);
-        //             }
-
-        //             g.segment<nx_>(i*nx_) << -Q_*x_ref;
-        //             g.segment<nu_>(((N_+1)*nx_) + i*nu_) << -R_*u_ref;
-        //         }
-
-        //         // fill the constraint matrix first with the dynamic constraint
-        //         // x_k+1 = Ad*x_k + Bd*u_k + hd
-        //         if (i < N_)
-        //         {
-        //             for (int row=0; row<nx_; row++)
-        //             {
-        //                 for (int col=0; col<nx_; col++)
-        //                 {
-        //                     A_c.insert((i+1)*nx_ + row, i*nx_ + col) = Ad(row, col);
-        //                 }
-        //             }
-
-        //             for (int row=0; row<nx_; row++)
-        //             {
-        //                 for (int col=0; col<nu_; col++)
-        //                 {
-        //                     A_c.insert((i+1)*nx_ + row, (N_+1)*nx_ + i*nu_ + col) = Bd(row, col);
-        //                 }
-        //             }
-
-        //             lb.segment<nx_>((i+1)*nx_) = -hd;
-        //             ub.segment<nx_>((i+1)*nx_) = -hd;
-        //         }
-
-        //         for (int row=0; row<nx_; row++)
-        //         {
-        //             A_c.insert(i*nx_+row, i*nx_+row)  = -1.0;
-        //         }
-
-        //         // fill Ax <= B
-        //         A_c.insert(((N_+1)*nx_) + 2*i, (i*nx_))= A11;
-        //         A_c.insert(((N_+1)*nx_) + 2*i, (i*nx_)+1) = A12;
-
-        //         A_c.insert(((N_+1)*nx_) + 2*i+1, (i*nx_)) = A21;
-        //         A_c.insert(((N_+1)*nx_) + 2*i+1, (i*nx_)+1) = A22;
-
-        //         lb(((N_+1)*nx_) + 2*i) = -OsqpEigen::INFTY;
-        //         ub(((N_+1)*nx_) + 2*i) = B11;
-
-        //         lb(((N_+1)*nx_) + 2*i+1) = -OsqpEigen::INFTY;
-        //         ub(((N_+1)*nx_) + 2*i+1) = B22;
-
-        //         // fill u_min < u < u_max in A_c
-        //         for(int row=0; row<nu_; row++)
-        //         {
-        //             A_c.insert((N_+1)*nx_+2*(N_+1)+i*nu_+row, (N_+1)*nx_+i*nu_+row) = 1.0;
-        //         }
-
-        //         lb((N_+1)*nx_ + 2*(N_+1) + i*nu_) = 0.0;
-        //         ub((N_+1)*nx_ + 2*(N_+1) + i*nu_) = max_speed_;
-
-        //         lb((N_+1)*nx_ + 2*(N_+1) + i*nu_ + 1) = -max_steer_;
-        //         ub((N_+1)*nx_ + 2*(N_+1) + i*nu_ + 1) = max_steer_;
-        //     }
-
-        //     // fill initial condition in lb and ub
-        //     lb.head(nx_) = -ref_trajectory[0];
-        //     ub.head(nx_) = -ref_trajectory[0];
-        //     lb((N_+1)*nx_ + 2*(N_+1)) = 3.5;
-        //     ub((N_+1)*nx_ + 2*(N_+1)) = 3.5;
-
-        //     Eigen::SparseMatrix<double> H_matrix_T = H_matrix.transpose();
-        //     Eigen::SparseMatrix<double> sparse_I((N_+1)*(nx_+nu_), (N_+1)*(nx_+nu_));
-        //     sparse_I.setIdentity();
-
-        //     H_matrix = 0.5*(H_matrix + H_matrix_T) + 0.0000001*sparse_I;
-
-        //     // osqp Eigen solver from https://robotology.github.io/osqp-eigen/doxygen/doc/html/index.html
-        //     // instantiate the solver
-        //     OsqpEigen::Solver solver;
-
-        //     solver.settings()->setWarmStart(true);
-        //     solver.data()->setNumberOfVariables((N_+1)*(nx_+nu_));
-        //     solver.data()->setNumberOfConstraints((N_+1)*nx_ + 2*(N_+1) + (N_+1)*nu_);
-
-        //     if(!solver.data()->setHessianMatrix(H_matrix)) throw "failed to set Hessian";
-        //     if(!solver.data()->setGradient(g)) throw "failed to set gradient";
-        //     if(!solver.data()->setLinearConstraintsMatrix(A_c)) throw "failed to set constraint matrix";
-        //     if(!solver.data()->setLowerBound(lb)) throw "failed to set lower bound";
-        //     if(!solver.data()->setUpperBound(ub)) throw "failed to set upper bound";
-
-        //     if(!solver.initSolver()) throw "failed to initialize solver";
-
-        //     planner::Inputs mpc_input;
-        //     mpc_input.header.stamp = ros::Time::now();
-        //     mpc_input.header.frame_id = ego_base_frame_;
-
-        //     if(!solver.solve())
-        //     {
-        //         mpc_input.feasible = false;
-        //         mpc_input_pub_.publish(mpc_input);
-        //         return;
-        //     }
-
-        //     Eigen::VectorXd QPSolution = solver.getSolution();
-
-        //     visualizeMPC(QPSolution);
-
-        //     const auto start_idx = (N_+1)*nx_;
-
-        //     for (int i=start_idx; i<QPSolution.size(); i+=2)
-        //     {
-        //         mpc_input.speed.push_back(QPSolution(i));
-        //         mpc_input.steering.push_back(QPSolution(i+1));
-        //     }
-        //     mpc_input.feasible = true;
-
-        //     mpc_input_pub_.publish(mpc_input);
-
-        //     solver.clearSolver();
         }
 
         void getCarDynamics(Eigen::Matrix<double,nx_,nx_>& Ad, Eigen::Matrix<double,nx_,nu_>& Bd, Eigen::Matrix<double,nx_,1>& hd, Eigen::Matrix<double,nx_,1>& state, Eigen::Matrix<double,nu_,1>& input)

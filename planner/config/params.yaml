@@ -1,7 +1,7 @@
 # Config file for planner
 
 # Constants for tuning
-lookahead_distance: 2.5
+lookahead_distance: 2.0
 
 bubble_radius: 0.40
 
@@ -20,7 +20,7 @@ delimiter: ","
 collision_points: 100
 
 alpha: 0.8
-ref_alpha: 0.2
+ref_alpha: 0.3
 max_acc: 9.51
 
 # Subscriber topics
