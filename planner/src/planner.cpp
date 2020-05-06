@@ -83,6 +83,7 @@ class Planner
         double inflation_r_;
         double gap_bubble_;
         bool too_close_;
+        bool use_mpc_;
         double alpha_;
         double ref_alpha_;
         double max_acc_;
@@ -227,6 +228,7 @@ class Planner
             nh_.getParam("r_v", r_v_);
             nh_.getParam("r_steer", r_steer_);
             nh_.getParam("step_size", step_size_);
+            nh_.getParam("use_mpc", use_mpc_);
 
             truncate_ = false;
             
@@ -420,68 +422,72 @@ class Planner
             findGapConstraints(best_waypoint);
 
             //REFERENCE TRAJECTORY USING PURE PURSUIT
-           const double ref_steering_angle = ReferencePPAngle(best_waypoint);
-           if (!collision_check){ROS_INFO("ref_steering_angle is: %f", ref_steering_angle);}
-
-           double next_x = ego_car_.x;
-           double next_y = ego_car_.y;
-           double initial_yaw = ego_car_.theta;
-
-           std::vector<Eigen::VectorXd> ref_trajectory;
-           std::vector<Eigen::VectorXd> ref_input;
-//
-           double ref_speed = current_ego_vel_;
-
-           Eigen::VectorXd traj(nx_);
-           Eigen::VectorXd input(nu_);
-
-           traj(0) = next_x;
-           traj(1) = next_y;
-           traj(2) = initial_yaw;
-
-           if (ref_speed < 0.1){ ref_speed = 3.5;}
-           input(0) = ref_speed; //current_ego_vel_;
-           input(1) = 0.0;
-
-           ref_trajectory.push_back(traj);
-           ref_input.push_back(input);
-//
-           // ROS_INFO("Initial Speed: %f", ref_speed);
-           //
-           if (ref_speed < 0.1){ ref_speed = 3.5; }
-
-           for (int i=0; i<N_; i++)
-           {
-               // double final_steering_angle = (1 - pow(ref_alpha_, i))*(ref_steering_angle)*2.0;
-               double val = (1 - ref_alpha_);
-               double final_steering_angle = 1.5*(ref_steering_angle)*pow(val, i);
-               // ROS_INFO("at i = %d, steering angle: %f, %f * %f", i, final_steering_angle, ref_steering_angle, pow(val, i));
-
-               ref_speed += Ts_*max_acc_;
-               ref_speed = std::min(4.5, ref_speed);
-               // ROS_INFO("Speed at i: %d is : %f", i, ref_speed);
-
-               Eigen::VectorXd input(nu_);
-               input(0) = ref_speed; //current_ego_vel_;
-               input(1) = final_steering_angle;
-
-               Eigen::VectorXd next_state(nx_);
-               // ROS_INFO("Input at stage: %d is : %f, %f", i, input(0), input(1));
-               // ROS_INFO("state at stage: %d is : %f, %f, %f \n", i, traj(0), traj(1), traj(2));
-               PropagateDynamics(traj, input, next_state, Ts_);
-
-               traj = next_state;
-
-               ref_trajectory.push_back(traj);
-               ref_input.push_back(input);
-           }
+            const double ref_steering_angle = ReferencePPAngle(best_waypoint);
+            if (!collision_check){ROS_INFO("ref_steering_angle is: %f", ref_steering_angle);}
+ 
+            double next_x = ego_car_.x;
+            double next_y = ego_car_.y;
+            double initial_yaw = ego_car_.theta;
+ 
+            std::vector<Eigen::VectorXd> ref_trajectory;
+            std::vector<Eigen::VectorXd> ref_input;
+ //
+            double ref_speed = current_ego_vel_;
+ 
+            Eigen::VectorXd traj(nx_);
+            Eigen::VectorXd input(nu_);
+ 
+            traj(0) = next_x;
+            traj(1) = next_y;
+            traj(2) = initial_yaw;
+ 
+            if (ref_speed < 0.1){ ref_speed = 3.5;}
+            input(0) = ref_speed; //current_ego_vel_;
+            input(1) = 0.0;
+ 
+            ref_trajectory.push_back(traj);
+            ref_input.push_back(input);
+ //
+            // ROS_INFO("Initial Speed: %f", ref_speed);
+            //
+            if (ref_speed < 0.1){ ref_speed = 3.5; }
+ 
+            for (int i=0; i<N_; i++)
+            {
+                // double final_steering_angle = (1 - pow(ref_alpha_, i))*(ref_steering_angle)*2.0;
+                double val = (1 - ref_alpha_);
+                double final_steering_angle = 1.5*(ref_steering_angle)*pow(val, i);
+                // ROS_INFO("at i = %d, steering angle: %f, %f * %f", i, final_steering_angle, ref_steering_angle, pow(val, i));
+ 
+                ref_speed += Ts_*max_acc_;
+                ref_speed = std::min(4.5, ref_speed);
+                // ROS_INFO("Speed at i: %d is : %f", i, ref_speed);
+ 
+                Eigen::VectorXd input(nu_);
+                input(0) = ref_speed; //current_ego_vel_;
+                input(1) = final_steering_angle;
+ 
+                Eigen::VectorXd next_state(nx_);
+                // ROS_INFO("Input at stage: %d is : %f, %f", i, input(0), input(1));
+                // ROS_INFO("state at stage: %d is : %f, %f, %f \n", i, traj(0), traj(1), traj(2));
+                PropagateDynamics(traj, input, next_state, Ts_);
+ 
+                traj = next_state;
+ 
+                ref_trajectory.push_back(traj);
+                ref_input.push_back(input);
+            }
 
             visualizeTrajectory(ref_trajectory);
 
-
-            initMPC(ref_trajectory, ref_input, ref_speed);
-
-           // publishPPSpeed(best_waypoint);
+            if (use_mpc_)
+            {
+                initMPC(ref_trajectory, ref_input, ref_speed);
+            }
+            else
+            {
+                publishPPSpeed(best_waypoint);
+            }
         }
 
         //This method predicts the path of the opponent car and updates the path as obstacles in the map
@@ -1259,7 +1265,7 @@ class Planner
 
             if (dist > 2.0)
             {
-                if (abs(opt_steering)<1.30)
+                if (abs(opt_steering)<0.30)
                 {
                     best_waypoint = waypoint_options[path_num_];
                     best_gaps_.clear();
@@ -1557,15 +1563,15 @@ class Planner
 
             if (!too_close_)
             {
-                HIGH_SPEED = 3.5;
-                MID_SPEED = 3.5;
+                HIGH_SPEED = 4.5;
+                MID_SPEED = 4.0;
                 LOW_SPEED = 3.5;
             }
             else
             {
 //                ROS_INFO("In low speed mode");
-                HIGH_SPEED = 3.0;
-                MID_SPEED = 2.0;
+                HIGH_SPEED = 4.0;
+                MID_SPEED = 3.0;
                 LOW_SPEED = 1.0;
             }
 

@@ -24,7 +24,7 @@ class PurePursuit
             lookahead_d_ = 1.8;
             waypt_num_ = 0.0;
             delimiter_ = ",";
-            filename_ = "/home/mihir/mihir_ws/src/f110_ros/f110_finalProject/gym_pp/data/fg_pp.csv";
+            filename_ = "/home/akhilesh/f110_ws/src/final_project/waypoints_data/wp_inner0.5.csv";
             ROS_INFO("Initialized constants!");
         }
 
@@ -34,7 +34,7 @@ class PurePursuit
         {
             ROS_INFO("Initializing publishers and subscribers...");
 
-            drive_pub_ = nh_.advertise<ackermann_msgs::AckermannDriveStamped>("/drive", 1);
+            drive_pub_ = nh_.advertise<ackermann_msgs::AckermannDriveStamped>("/opp_drive", 1);
             waypoint_viz_pub_ = nh_.advertise<visualization_msgs::Marker>("waypoint_markers", 100);
             
             pose_sub_ = nh_.subscribe("/gt_pose", 1, &PurePursuit::poseCallback, this);
@@ -97,7 +97,7 @@ class PurePursuit
                 double scale_x=0.1, double scale_y=0.1, double scale_z=0.1)
         {
             visualization_msgs::Marker waypoint_marker;
-            waypoint_marker.header.frame_id = "ego_racecar/base_link";
+            waypoint_marker.header.frame_id = "opp_racecar/base_link";
             waypoint_marker.header.stamp = ros::Time();
             waypoint_marker.ns = "pure_pursuit";
             waypoint_marker.type = visualization_msgs::Marker::CUBE;
@@ -181,7 +181,7 @@ class PurePursuit
         std::vector<Waypoint> transform(const std::vector<Waypoint>& waypoints, const Waypoint& current_pose, const tf2_ros::Buffer& tf_buffer, const tf2_ros::TransformListener& tf_listener)
         {
             geometry_msgs::TransformStamped map_to_base_link;
-            map_to_base_link = tf_buffer.lookupTransform("ego_racecar/base_link", "map", ros::Time(0));
+            map_to_base_link = tf_buffer.lookupTransform("opp_racecar/base_link", "map", ros::Time(0));
 
             std::vector<Waypoint> transformed_waypoints;
 
@@ -217,7 +217,7 @@ class PurePursuit
 
             // Transform the waypoint to base_link frame
             geometry_msgs::TransformStamped map_to_base_link;
-            map_to_base_link = tf_buffer_.lookupTransform("ego_racecar/base_link", "map", ros::Time(0));
+            map_to_base_link = tf_buffer_.lookupTransform("opp_racecar/base_link", "map", ros::Time(0));
 
             geometry_msgs::Pose goal_waypoint;
             goal_waypoint.position.x = waypoint_data_[best_waypoint].x;
@@ -230,7 +230,7 @@ class PurePursuit
 
             tf2::doTransform(goal_waypoint, goal_waypoint, map_to_base_link);
 
-            add_waypoint_viz(goal_waypoint, "base_link", 0.0, 1.0, 0.0, 1.0, 0.2, 0.2, 0.2);
+            add_waypoint_viz(goal_waypoint, "opp_racecar/base_link", 0.0, 1.0, 0.0, 1.0, 0.2, 0.2, 0.2);
 
             // Calculate steering angle
             const double steering_angle = 0.6*2*goal_waypoint.position.y/(lookahead_d_ * lookahead_d_);
@@ -238,7 +238,8 @@ class PurePursuit
            
             // Publish drive message
             ackermann_msgs::AckermannDriveStamped drive_msg;
-            drive_msg.header.frame_id = "ego_racecar/base_link";
+            drive_msg.header.frame_id = "opp_racecar/base_link";
+            drive_msg.header.stamp = ros::Time::now();
             drive_msg.drive.steering_angle = steering_angle;
 
             // Threshold steering angle for steering lock and velocity for turns
@@ -264,7 +265,7 @@ class PurePursuit
                     drive_msg.drive.speed = 4.0;
                     if (steering_angle < -0.4)
                     {
-                        drive_msg.drive.speed = -0.4;
+                        drive_msg.drive.steering_angle = -0.4;
                     }
                 }
                 else

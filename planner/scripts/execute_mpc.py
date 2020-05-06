@@ -52,7 +52,7 @@ class ExecuteMPC():
             steer = -0.41
 
         drive_msg = ADS()
-        drive_msg.header.stamp = rospy.Time()
+        drive_msg.header.stamp = rospy.Time.now()
         drive_msg.header.frame_id = self.ego_car_
         drive_msg.drive.speed = vel
         drive_msg.drive.steering_angle = steer

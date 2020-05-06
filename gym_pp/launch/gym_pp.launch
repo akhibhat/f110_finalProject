@@ -2,7 +2,7 @@
 
 <launch>
 
-    <include file="$(find f1tenth_gym_ros)/launch/gym_bridge_host.launch"/>
+    <!--include file="$(find f1tenth_gym_ros)/launch/gym_bridge_host.launch"/-->
 
     <node pkg="gym_pp" type="gym_pp_node" name="pure_pursuit" output="screen"/>
 
