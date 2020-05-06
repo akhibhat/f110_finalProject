@@ -14,8 +14,6 @@ We use a modified follow-the-gap planner to come up with the best waypoint to pu
 
 To ensure dynamic feasibility, we track the reference trajectory using a MPC formulation, penalizing the deviation from reference trajecotry while satisfying workspace constraints. The constraints are obtained by finding the biggest gap around the best waypoint to follow. We employ the kinematic car model to cpature the car dynamics.
 
-We use a 
-
 ## Pure Pursuit
 
 We have also implemented a pure pursuit version of our code which runs surprisingly well. For this, we have two different modes of speed. When the opponent car is in front of us nearby, we switch to a low speed mode in order to avoid any kind of collision. On the other hand, when we are ahead of the opponent after overtaking, we switch to a high speed mode so that we can leave it behind.
