@@ -232,7 +232,7 @@ class Planner
 
             truncate_ = false;
             
-            optimal_waypoint_file_ = folder_path_ + "/waypoints_data/wp_with_yaw.csv";
+            optimal_waypoint_file_ = folder_path_ + "/waypoints_data/wp_optimal_better.csv";
             path_num_ = 4;
 
             clear_obstacles_count_ = 0;
@@ -1393,7 +1393,7 @@ class Planner
                 Waypoint waypoint{};
                 waypoint.x = std::stod(vec[0]);
                 waypoint.y = std::stod(vec[1]);
-                waypoint.heading = std::stod(vec[2]);
+                // waypoint.heading = std::stod(vec[2]);
                 waypoint.speed = 0.0;
 
                 trajectory.push_back(waypoint);

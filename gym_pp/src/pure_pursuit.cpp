@@ -24,7 +24,7 @@ class PurePursuit
             lookahead_d_ = 1.8;
             waypt_num_ = 0.0;
             delimiter_ = ",";
-            filename_ = "/home/akhilesh/f110_ws/src/final_project/waypoints_data/wp_inner0.5.csv";
+            filename_ = "/home/akhilesh/f110_ws/src/final_project/waypoints_data/wp_with_yaw.csv";
             ROS_INFO("Initialized constants!");
         }
 
