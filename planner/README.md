@@ -14,7 +14,7 @@ We use a modified follow-the-gap planner to come up with the best waypoint to pu
 
 We have also implemented a pure pursuit version of our code which runs surprisingly well. For this, we have two different modes of speed. When the opponent car is in front of us nearby, we switch to a low speed mode in order to avoid any kind of collision. On the other hand, when we are ahead of the opponent after overtaking, we switch to a high speed mode so that we can leave it behind.
 
-Currently, we are in MPC mode and in order to switch to Pure Pursuit mode, you will need to change the parameter `use_mpc` in the file `config/params.yaml`
+Currently, we are in Pure Pursuit mode and in order to switch to MPC mode, you will need to toggle the parameter `use_mpc` in the file `config/params.yaml`
 
 ## Dependencies
 
