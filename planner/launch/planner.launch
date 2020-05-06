@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<launch>
+
+    <rosparam command="load" file="$(find planner)/config/params.yaml" />
+    <rosparam command="load" file="$(find planner)/config/mpc_params.yaml" />
+
+    <include file="$(find f1tenth_gym_ros)/launch/gym_bridge_host.launch"/>
+
+    <node pkg="planner" type="planner_node" name="planner" output="screen"/>
+
+    <node pkg="planner" type="execute_mpc.py" name="execute" output="screen"/>
+
+</launch>

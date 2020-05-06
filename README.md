@@ -10,9 +10,13 @@ The `gym_pp` folder contains code to run the pure pursuit algorithm in the gym e
 
 The `gym_rrt` folder contains the code to run the rrt* algorithm
 
+## Milestone 4: FINAL RACE!
+
+The `planner` folder contains the code for the final race
+
 ## TODO
 - [x] Follow the gap with multiple tracks
 - [x] Implement prediction for opponent car
-- [ ] Incorporate prediction into follow the gap
-- [ ] Generate a high level path using Dubins curve for MPC to track (Backup: Use RRT*)
-- [ ] MPC
+- [x] Incorporate prediction into follow the gap
+- [x] Generate a high level path using Dubins curve for MPC to track (Backup: Use RRT*)
+- [x] MPC

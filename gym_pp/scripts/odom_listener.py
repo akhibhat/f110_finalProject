@@ -11,7 +11,7 @@ class Listener:
         rospy.init_node("odom_listener", anonymous=True)
 
         self.pose_pub_ = rospy.Publisher("/gt_pose", PoseStamped, queue_size=1)
-        self.odom_sub_ = rospy.Subscriber("/odom", Odometry, self.odomCallback)
+        self.odom_sub_ = rospy.Subscriber("/opp_odom", Odometry, self.odomCallback)
 
         rospy.loginfo("Publishing odom as pose stamped msg")
 
