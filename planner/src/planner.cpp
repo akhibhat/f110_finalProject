@@ -1265,7 +1265,7 @@ class Planner
 
             if (dist > 2.0)
             {
-                if (abs(opt_steering)<0.30)
+                if (abs(opt_steering)<0.41)
                 {
                     best_waypoint = waypoint_options[path_num_];
                     best_gaps_.clear();

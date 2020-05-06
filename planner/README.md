@@ -1,14 +1,20 @@
-# Model Predictive Control
+# A Heirarchical Control Strategy for Multi-Agent Autonomous Racing
 
-We use a Model Predictive Control algorithm to track a reference trajectory to the best waypoint selected from five different tracks around the race circuit using a modified follow-the-gap planner.
+We use a Heirarchical Controller which employs a two-level structure: a high level planner which generates a reference trajectory that maiximizes the progress on the track ensuring obstacle avoidance. Next, we use MPC control technique for tracking the reference trajectory obtained from the planner and also try pure-pursuit control algorithm.
 
 The file `src/planner.src` contains the code for the planner and generates a solution to the MPC problem. The solution consisting of the inputs, i.e. the steering angle and the velocity input, is then published as a custom message `Inputs.msg` over the `mpc_inputs` topic. The file `scripts/execute_mpc.py` subscribes to these inputs. If the mpc solution is feasible, it executes the most recent solution. Else, it continues executing the previous solution till it receives the next feasible solution.
+
+
 
 ## Planner
 
 We use a modified follow-the-gap planner to come up with the best waypoint to pursue. The waypoints are selected from a set of five tracks around the race circuit which are pre-computed. The data can be found in the [`waypoints_data`](https://github.com/akhibhat/f110_finalProject/tree/master/waypoints_data) folder in the repository.
 
 ## MPC
+
+To ensure dynamic feasibility, we track the reference trajectory using a MPC formulation, penalizing the deviation from reference trajecotry while satisfying workspace constraints. The constraints are obtained by finding the biggest gap around the best waypoint to follow. We employ the kinematic car model to cpature the car dynamics.
+
+We use a 
 
 ## Pure Pursuit
 
